@@ -2,7 +2,7 @@
 
 这是一个面向 HydroOJ 默认 UI 的 Monaco 代码编辑器增强插件。它不需要额外部署语言服务器，在浏览器内提供：
 
-- 竞赛编程补全：覆盖 C、C++、Python、Java、Kotlin、Go、Rust、C#、JavaScript 等常用语言。
+- 竞赛编程补全：覆盖 C、C++、Python、Java、Kotlin、Go、Rust、C#、JavaScript 等常用语言，包括关键字、标准库符号和代码片段。
 - 代码模板：从命令面板、右键菜单或快捷键插入各语言的完整提交模板。
 - 代码格式化：优先使用 Monaco 已注册的格式化能力，并为常用 OJ 语言提供保守的缩进/空白格式化。
 - 即时代码诊断：检查括号、全角符号、Git 冲突标记、可疑空语句、入口函数、Java `Main` 类和 Python 混合缩进。
@@ -26,6 +26,8 @@ hydrooj addon add "$(pwd)"
 ## 使用
 
 打开普通题目、比赛题目或作业题目的 Scratchpad，或直接进入提交页。插件会自动识别 Hydro 语言设置中的 `monaco` 模式。
+
+输入符号前缀即可显示候选，例如 C++ 中输入 `qu` 得到 `queue`，Python 中输入 `pri` 得到 `print`，Java 中输入 `Pri` 得到 `PriorityQueue`。候选出现后可按 <kbd>Tab</kbd>/<kbd>Enter</kbd> 或点击完成输入。
 
 | 操作 | 快捷键 |
 | --- | --- |

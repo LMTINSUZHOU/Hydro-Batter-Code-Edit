@@ -12,6 +12,15 @@ export interface CompletionSnippet {
     body: string;
 }
 
+export type CompletionSymbolKind = 'keyword' | 'class' | 'function' | 'constant' | 'module' | 'property';
+
+export interface CompletionSymbol {
+    label: string;
+    detail: string;
+    kind: CompletionSymbolKind;
+    insertText?: string;
+}
+
 const MAIN_TEMPLATES: Record<string, CodeTemplate> = {
     cpp: {
         id: 'cpp-main',
@@ -319,6 +328,176 @@ $0`,
     ],
 };
 
+function symbols(words: string[], kind: CompletionSymbolKind, detail: string): CompletionSymbol[] {
+    return words.map((label) => ({ label, kind, detail }));
+}
+
+const C_LIKE_KEYWORDS = [
+    'break', 'case', 'const', 'continue', 'default', 'do', 'else', 'enum', 'for', 'goto', 'if',
+    'return', 'sizeof', 'static', 'struct', 'switch', 'typedef', 'union', 'volatile', 'while',
+];
+
+const LANGUAGE_SYMBOLS: Record<string, CompletionSymbol[]> = {
+    cpp: [
+        ...symbols([
+            ...C_LIKE_KEYWORDS,
+            'alignas', 'alignof', 'and', 'and_eq', 'asm', 'auto', 'bitand', 'bitor', 'bool',
+            'catch', 'char', 'char16_t', 'char32_t', 'class', 'compl', 'concept', 'consteval',
+            'constexpr', 'constinit', 'const_cast', 'co_await', 'co_return', 'co_yield', 'decltype',
+            'delete', 'double', 'dynamic_cast', 'explicit', 'export', 'extern', 'false', 'float',
+            'friend', 'inline', 'int', 'long', 'mutable', 'namespace', 'new', 'noexcept', 'not',
+            'not_eq', 'nullptr', 'operator', 'or', 'or_eq', 'private', 'protected', 'public',
+            'register', 'reinterpret_cast', 'requires', 'short', 'signed', 'static_assert',
+            'static_cast', 'template', 'this', 'thread_local', 'throw', 'true', 'try', 'typeid',
+            'typename', 'unsigned', 'using', 'virtual', 'void', 'wchar_t', 'xor', 'xor_eq',
+        ], 'keyword', 'C++ keyword'),
+        ...symbols([
+            'array', 'bitset', 'deque', 'forward_list', 'list', 'map', 'multimap', 'multiset',
+            'optional', 'pair', 'priority_queue', 'queue', 'set', 'span', 'stack', 'string',
+            'string_view', 'tuple', 'unordered_map', 'unordered_multimap', 'unordered_multiset',
+            'unordered_set', 'variant', 'vector',
+        ], 'class', 'C++ standard library type'),
+        ...symbols([
+            'accumulate', 'all_of', 'any_of', 'binary_search', 'clamp', 'count', 'count_if',
+            'equal_range', 'fill', 'find', 'find_if', 'gcd', 'iota', 'is_sorted', 'lcm',
+            'lower_bound', 'make_pair', 'make_tuple', 'max', 'max_element', 'merge', 'min',
+            'min_element', 'next_permutation', 'none_of', 'nth_element', 'partial_sort',
+            'prev_permutation', 'reverse', 'rotate', 'sort', 'stable_sort', 'swap', 'transform',
+            'unique', 'upper_bound',
+        ], 'function', 'C++ standard library function'),
+        ...symbols([
+            'begin', 'cbegin', 'cend', 'cin', 'cerr', 'clog', 'cout', 'emplace', 'emplace_back',
+            'end', 'endl', 'fixed', 'greater', 'less', 'make_heap', 'numeric_limits', 'pop_back',
+            'pop_heap', 'push_back', 'push_heap', 'setprecision', 'size',
+        ], 'property', 'Common C++ standard library symbol'),
+        ...symbols(['INT_MAX', 'INT_MIN', 'LLONG_MAX', 'LLONG_MIN', 'MOD', 'NULL'], 'constant', 'Common constant'),
+    ],
+    c: [
+        ...symbols([
+            ...C_LIKE_KEYWORDS, '_Alignas', '_Alignof', '_Atomic', '_Bool', '_Complex', '_Generic',
+            '_Imaginary', '_Noreturn', '_Static_assert', '_Thread_local', 'auto', 'char', 'double',
+            'extern', 'float', 'inline', 'int', 'long', 'register', 'restrict', 'short', 'signed',
+            'unsigned', 'void',
+        ], 'keyword', 'C keyword'),
+        ...symbols([
+            'abs', 'calloc', 'fclose', 'fgets', 'fopen', 'fprintf', 'free', 'getchar', 'malloc',
+            'memcpy', 'memset', 'printf', 'putchar', 'puts', 'qsort', 'realloc', 'scanf', 'snprintf',
+            'sprintf', 'sscanf', 'strcmp', 'strcpy', 'strlen', 'strncmp', 'strncpy',
+        ], 'function', 'C standard library function'),
+        ...symbols(['FILE', 'int32_t', 'int64_t', 'size_t', 'uint32_t', 'uint64_t'], 'class', 'C standard library type'),
+        ...symbols(['EOF', 'INT_MAX', 'INT_MIN', 'LLONG_MAX', 'LLONG_MIN', 'NULL'], 'constant', 'C standard constant'),
+    ],
+    python: [
+        ...symbols([
+            'and', 'as', 'assert', 'async', 'await', 'break', 'case', 'class', 'continue', 'def',
+            'del', 'elif', 'else', 'except', 'False', 'finally', 'for', 'from', 'global', 'if',
+            'import', 'in', 'is', 'lambda', 'match', 'None', 'nonlocal', 'not', 'or', 'pass',
+            'raise', 'return', 'True', 'try', 'while', 'with', 'yield',
+        ], 'keyword', 'Python keyword'),
+        ...symbols([
+            'all', 'any', 'bin', 'bool', 'bytearray', 'bytes', 'callable', 'chr', 'dict',
+            'divmod', 'enumerate', 'filter', 'float', 'frozenset', 'getattr', 'hasattr', 'hash',
+            'hex', 'input', 'int', 'isinstance', 'issubclass', 'iter', 'len', 'list', 'map', 'max',
+            'min', 'next', 'object', 'oct', 'open', 'ord', 'pow', 'print', 'range', 'repr', 'reversed',
+            'round', 'set', 'slice', 'sorted', 'str', 'sum', 'super', 'tuple', 'type', 'zip',
+        ], 'function', 'Python built-in'),
+        ...symbols([
+            'bisect', 'collections', 'functools', 'heapq', 'itertools', 'math', 'operator', 'queue',
+            'random', 'sys',
+        ], 'module', 'Python standard library module'),
+        ...symbols(['Counter', 'defaultdict', 'deque', 'lru_cache'], 'class', 'Common Python standard library symbol'),
+    ],
+    java: [
+        ...symbols([
+            'abstract', 'assert', 'boolean', 'break', 'byte', 'case', 'catch', 'char', 'class',
+            'const', 'continue', 'default', 'do', 'double', 'else', 'enum', 'extends', 'false',
+            'final', 'finally', 'float', 'for', 'goto', 'if', 'implements', 'import', 'instanceof',
+            'int', 'interface', 'long', 'native', 'new', 'null', 'package', 'private', 'protected',
+            'public', 'record', 'return', 'sealed', 'short', 'static', 'strictfp', 'super', 'switch',
+            'synchronized', 'this', 'throw', 'throws', 'transient', 'true', 'try', 'var', 'void',
+            'volatile', 'while', 'yield',
+        ], 'keyword', 'Java keyword'),
+        ...symbols([
+            'ArrayDeque', 'ArrayList', 'Arrays', 'BigInteger', 'BufferedReader', 'BufferedWriter',
+            'Collections', 'Comparator', 'HashMap', 'HashSet', 'LinkedHashMap', 'LinkedList', 'List',
+            'Map', 'Math', 'PriorityQueue', 'Queue', 'Scanner', 'Set', 'String', 'StringBuilder',
+            'StringTokenizer', 'TreeMap', 'TreeSet',
+        ], 'class', 'Java standard library type'),
+        ...symbols(['binarySearch', 'compare', 'max', 'min', 'sort'], 'function', 'Common Java standard library method'),
+    ],
+    kotlin: [
+        ...symbols([
+            'as', 'break', 'class', 'continue', 'do', 'else', 'false', 'for', 'fun', 'if', 'in',
+            'interface', 'is', 'null', 'object', 'package', 'return', 'super', 'this', 'throw', 'true',
+            'try', 'typealias', 'typeof', 'val', 'var', 'when', 'while',
+        ], 'keyword', 'Kotlin keyword'),
+        ...symbols([
+            'Array', 'ArrayDeque', 'HashMap', 'HashSet', 'IntArray', 'List', 'LongArray', 'Map',
+            'MutableList', 'MutableMap', 'MutableSet', 'Pair', 'PriorityQueue', 'Queue', 'Set',
+            'StringBuilder',
+        ], 'class', 'Common Kotlin/JVM type'),
+        ...symbols(['listOf', 'mapOf', 'maxOf', 'minOf', 'mutableListOf', 'readLine', 'setOf'], 'function', 'Kotlin standard function'),
+    ],
+    go: [
+        ...symbols([
+            'break', 'case', 'chan', 'const', 'continue', 'default', 'defer', 'else', 'fallthrough',
+            'for', 'func', 'go', 'goto', 'if', 'import', 'interface', 'map', 'package', 'range',
+            'return', 'select', 'struct', 'switch', 'type', 'var',
+        ], 'keyword', 'Go keyword'),
+        ...symbols([
+            'append', 'bool', 'byte', 'cap', 'close', 'complex', 'complex64', 'complex128', 'copy',
+            'delete', 'error', 'float32', 'float64', 'imag', 'int', 'int8', 'int16', 'int32', 'int64',
+            'len', 'make', 'new', 'panic', 'print', 'println', 'real', 'recover', 'rune', 'string',
+            'uint', 'uint8', 'uint16', 'uint32', 'uint64', 'uintptr',
+        ], 'function', 'Go predeclared identifier'),
+        ...symbols(['bufio', 'fmt', 'math', 'os', 'sort', 'strconv', 'strings'], 'module', 'Common Go package'),
+    ],
+    rust: [
+        ...symbols([
+            'as', 'async', 'await', 'break', 'const', 'continue', 'crate', 'dyn', 'else', 'enum',
+            'extern', 'false', 'fn', 'for', 'if', 'impl', 'in', 'let', 'loop', 'match', 'mod', 'move',
+            'mut', 'pub', 'ref', 'return', 'self', 'Self', 'static', 'struct', 'super', 'trait', 'true',
+            'type', 'unsafe', 'use', 'where', 'while',
+        ], 'keyword', 'Rust keyword'),
+        ...symbols([
+            'BinaryHeap', 'BTreeMap', 'BTreeSet', 'HashMap', 'HashSet', 'Option', 'Result', 'String',
+            'Vec', 'VecDeque',
+        ], 'class', 'Common Rust standard library type'),
+        ...symbols(['eprintln', 'format', 'print', 'println', 'vec'], 'function', 'Common Rust macro'),
+    ],
+    csharp: [
+        ...symbols([
+            'abstract', 'as', 'async', 'await', 'base', 'bool', 'break', 'byte', 'case', 'catch',
+            'char', 'checked', 'class', 'const', 'continue', 'decimal', 'default', 'delegate', 'do',
+            'double', 'else', 'enum', 'event', 'explicit', 'extern', 'false', 'finally', 'fixed',
+            'float', 'for', 'foreach', 'goto', 'if', 'implicit', 'in', 'int', 'interface', 'internal',
+            'is', 'lock', 'long', 'namespace', 'new', 'null', 'object', 'operator', 'out', 'override',
+            'params', 'private', 'protected', 'public', 'readonly', 'record', 'ref', 'return', 'sbyte',
+            'sealed', 'short', 'sizeof', 'stackalloc', 'static', 'string', 'struct', 'switch', 'this',
+            'throw', 'true', 'try', 'typeof', 'uint', 'ulong', 'unchecked', 'unsafe', 'ushort', 'using',
+            'var', 'virtual', 'void', 'volatile', 'while', 'yield',
+        ], 'keyword', 'C# keyword'),
+        ...symbols([
+            'Array', 'Console', 'Dictionary', 'HashSet', 'List', 'Math', 'PriorityQueue', 'Queue',
+            'SortedDictionary', 'SortedSet', 'Stack', 'StringBuilder',
+        ], 'class', 'Common .NET type'),
+    ],
+    javascript: [
+        ...symbols([
+            'async', 'await', 'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger',
+            'default', 'delete', 'do', 'else', 'export', 'extends', 'false', 'finally', 'for', 'from',
+            'function', 'get', 'if', 'import', 'in', 'instanceof', 'let', 'new', 'null', 'of', 'return',
+            'set', 'static', 'super', 'switch', 'this', 'throw', 'true', 'try', 'typeof', 'undefined',
+            'var', 'void', 'while', 'with', 'yield',
+        ], 'keyword', 'JavaScript keyword'),
+        ...symbols([
+            'Array', 'BigInt', 'Boolean', 'Date', 'Error', 'JSON', 'Map', 'Math', 'Number', 'Object',
+            'Promise', 'RegExp', 'Set', 'String', 'WeakMap', 'WeakSet',
+        ], 'class', 'JavaScript built-in'),
+        ...symbols(['console', 'parseFloat', 'parseInt', 'require'], 'function', 'Common JavaScript/Node.js symbol'),
+    ],
+};
+
 const ALIASES: Record<string, string> = {
     cc: 'cpp',
     'c++': 'cpp',
@@ -358,6 +537,21 @@ export function getCompletionSnippets(language: string): CompletionSnippet[] {
         },
         ...snippets,
     ];
+}
+
+export function getCompletionSymbols(language: string, prefix = ''): CompletionSymbol[] {
+    const normalized = normalizeLanguage(language);
+    const query = prefix.toLowerCase();
+    const unique = new Map<string, CompletionSymbol>();
+    for (const item of LANGUAGE_SYMBOLS[normalized] || []) {
+        if (query && !item.label.toLowerCase().startsWith(query)) continue;
+        if (!unique.has(item.label)) unique.set(item.label, item);
+    }
+    return Array.from(unique.values()).sort((left, right) => {
+        const leftExact = left.label.toLowerCase() === query ? 0 : 1;
+        const rightExact = right.label.toLowerCase() === query ? 0 : 1;
+        return leftExact - rightExact || left.label.localeCompare(right.label);
+    });
 }
 
 export function getSupportedLanguages(): string[] {

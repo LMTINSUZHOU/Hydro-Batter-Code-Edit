@@ -2,7 +2,10 @@ import {
   $, addPage, i18n, loadMonaco, NamedPage, Notification,
 } from '@hydrooj/ui-default';
 import type * as Monaco from 'monaco-editor';
-import { getCompletionSnippets, getSupportedLanguages, getTemplates, normalizeLanguage } from '../src/catalog';
+import {
+  CompletionSymbolKind, getCompletionSnippets, getCompletionSymbols, getSupportedLanguages,
+  getTemplates, normalizeLanguage,
+} from '../src/catalog';
 import { diagnoseCode } from '../src/diagnostics';
 import {
   buildDraftKey, cleanupExpiredDrafts, clearDraft, DraftContext, readDraft, writeDraft,
@@ -87,20 +90,45 @@ function registerProviders(monaco: typeof Monaco) {
             startColumn: word.startColumn,
             endColumn: word.endColumn,
           };
+          const prefix = model.getValueInRange(range);
+          const snippets = getCompletionSnippets(language).filter((snippet) => {
+            const query = prefix.toLowerCase();
+            return !query
+              || snippet.prefix.toLowerCase().startsWith(query)
+              || snippet.label.toLowerCase().startsWith(query);
+          });
+          const symbolKinds: Record<CompletionSymbolKind, Monaco.languages.CompletionItemKind> = {
+            keyword: monaco.languages.CompletionItemKind.Keyword,
+            class: monaco.languages.CompletionItemKind.Class,
+            function: monaco.languages.CompletionItemKind.Function,
+            constant: monaco.languages.CompletionItemKind.Constant,
+            module: monaco.languages.CompletionItemKind.Module,
+            property: monaco.languages.CompletionItemKind.Property,
+          };
           return {
-            suggestions: getCompletionSnippets(language).map((snippet, index) => ({
-              label: snippet.label,
-              detail: snippet.detail,
-              documentation: snippet.detail,
-              filterText: `${snippet.prefix} ${snippet.label}`,
-              insertText: snippet.body,
-              insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-              kind: index === 0
-                ? monaco.languages.CompletionItemKind.Module
-                : monaco.languages.CompletionItemKind.Snippet,
-              range,
-              sortText: `0${index.toString().padStart(2, '0')}`,
-            })),
+            suggestions: [
+              ...snippets.map((snippet, index) => ({
+                label: snippet.label,
+                detail: snippet.detail,
+                documentation: snippet.detail,
+                filterText: `${snippet.prefix} ${snippet.label}`,
+                insertText: snippet.body,
+                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                kind: monaco.languages.CompletionItemKind.Snippet,
+                range,
+                sortText: `00${index.toString().padStart(2, '0')}`,
+              })),
+              ...getCompletionSymbols(language, prefix).map((symbol) => ({
+                label: symbol.label,
+                detail: symbol.detail,
+                documentation: symbol.detail,
+                filterText: symbol.label,
+                insertText: symbol.insertText || symbol.label,
+                kind: symbolKinds[symbol.kind],
+                range,
+                sortText: `10${symbol.label.toLowerCase()}`,
+              })),
+            ],
           };
         },
       }));
@@ -349,6 +377,14 @@ class EditorSession {
       return;
     }
     this.statusNode.style.display = '';
+    this.editor.updateOptions({
+      acceptSuggestionOnEnter: 'on',
+      quickSuggestions: { other: true, comments: false, strings: false },
+      quickSuggestionsDelay: 50,
+      snippetSuggestions: 'top',
+      suggestOnTriggerCharacters: true,
+      tabCompletion: 'on',
+    });
     this.modelDisposables.push(model.onDidChangeContent(() => {
       this.scheduleAutosave();
       this.scheduleDiagnostics();
