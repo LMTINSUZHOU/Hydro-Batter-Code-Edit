@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-    getCompletionSnippets, getCompletionSymbols, getTemplates, normalizeLanguage,
+    getCompletionSnippets, getCompletionSymbols, getTemplates, getUniqueCompletionSymbol,
+    normalizeLanguage,
 } from '../src/catalog';
 
 describe('template catalog', () => {
@@ -8,6 +9,10 @@ describe('template catalog', () => {
         expect(normalizeLanguage('cc.cc17')).toBe('cpp');
         expect(normalizeLanguage('py.py3')).toBe('python');
         expect(normalizeLanguage('cs')).toBe('csharp');
+        expect(normalizeLanguage('c_cpp')).toBe('cpp');
+        expect(normalizeLanguage('text/x-c++src')).toBe('cpp');
+        expect(normalizeLanguage('python3')).toBe('python');
+        expect(normalizeLanguage('java astyle-java')).toBe('java');
     });
 
     it('provides complete entry-point templates', () => {
@@ -39,5 +44,13 @@ describe('template catalog', () => {
         expect(getCompletionSymbols('java', 'Arr').map((item) => item.label)).toEqual([
             'ArrayDeque', 'ArrayList', 'Arrays',
         ]);
+    });
+
+    it('expands unambiguous symbol prefixes with Tab fallback semantics', () => {
+        expect(getUniqueCompletionSymbol('cpp', 'qu')?.label).toBe('queue');
+        expect(getUniqueCompletionSymbol('python', 'qu')?.label).toBe('queue');
+        expect(getUniqueCompletionSymbol('java', 'qu')?.label).toBe('Queue');
+        expect(getUniqueCompletionSymbol('java', 'Arr')).toBeUndefined();
+        expect(getUniqueCompletionSymbol('cpp', 'q')).toBeUndefined();
     });
 });

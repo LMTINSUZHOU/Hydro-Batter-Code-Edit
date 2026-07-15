@@ -9,4 +9,7 @@ export function addPage(page: unknown): void;
 export class NamedPage {
     constructor(name: string | string[], callback: (pageName: string) => unknown);
 }
+export class AutoloadPage {
+    constructor(name: string | string[], callback: (pageName: string) => unknown);
+}
 export function loadMonaco(features?: string[]): Promise<any>;

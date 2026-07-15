@@ -1,10 +1,10 @@
 import {
-  $, addPage, i18n, loadMonaco, NamedPage, Notification,
+  $, addPage, AutoloadPage, i18n, loadMonaco, Notification,
 } from '@hydrooj/ui-default';
 import type * as Monaco from 'monaco-editor';
 import {
   CompletionSymbolKind, getCompletionSnippets, getCompletionSymbols, getSupportedLanguages,
-  getTemplates, normalizeLanguage,
+  getTemplates, getUniqueCompletionSymbol, normalizeLanguage,
 } from '../src/catalog';
 import { diagnoseCode } from '../src/diagnostics';
 import {
@@ -13,26 +13,46 @@ import {
 import { formatCode, supportsFallbackFormatting } from '../src/formatter';
 import { BatterEditorConfig, DEFAULT_EDITOR_CONFIG } from '../types';
 
-const PAGE_NAMES = [
-  'problem_detail',
-  'contest_detail_problem',
-  'homework_detail_problem',
-  'problem_submit',
-  'contest_detail_problem_submit',
-  'homework_detail_problem_submit',
-];
 const SUBMIT_PAGE_NAMES = new Set([
   'problem_submit',
   'contest_detail_problem_submit',
   'homework_detail_problem_submit',
 ]);
+const PLUGIN_VERSION = '1.0.2';
 const MARKER_OWNER = 'hydro-batter-code-edit';
+const supportedLanguages = new Set(getSupportedLanguages());
 const sessions = new Set<EditorSession>();
 const attachedEditors = new WeakMap<Monaco.editor.IStandaloneCodeEditor, EditorSession>();
+const completionProviderLanguages = new Set<string>();
+const formattingProviderLanguages = new Set<string>();
+const languageBindings = new Map<string, string>();
 
 let monacoApi: typeof Monaco;
 let config: BatterEditorConfig;
 let providerDisposables: Monaco.IDisposable[] = [];
+
+interface RuntimeStatus {
+  version: string;
+  loaded: boolean;
+  pageName: string;
+  completionEnabled: boolean;
+  registeredLanguages: string[];
+  editorCount: number;
+  completionRequests: number;
+  lastCompletion?: { language: string; prefix: string; count: number };
+  error?: string;
+}
+
+const runtimeStatus: RuntimeStatus = {
+  version: PLUGIN_VERSION,
+  loaded: false,
+  pageName: '',
+  completionEnabled: false,
+  registeredLanguages: [],
+  editorCount: 0,
+  completionRequests: 0,
+};
+(window as any).HydroBatterCodeEdit = runtimeStatus;
 
 function getConfig(): BatterEditorConfig {
   return {
@@ -76,81 +96,145 @@ function installStyles() {
   document.head.appendChild(style);
 }
 
-function registerProviders(monaco: typeof Monaco) {
-  if (providerDisposables.length) return;
-  const completionLanguages = getSupportedLanguages();
-  if (config.completion) {
-    for (const language of completionLanguages) {
-      providerDisposables.push(monaco.languages.registerCompletionItemProvider(language, {
-        provideCompletionItems(model, position) {
-          const word = model.getWordUntilPosition(position);
-          const range = {
-            startLineNumber: position.lineNumber,
-            endLineNumber: position.lineNumber,
-            startColumn: word.startColumn,
-            endColumn: word.endColumn,
-          };
-          const prefix = model.getValueInRange(range);
-          const snippets = getCompletionSnippets(language).filter((snippet) => {
-            const query = prefix.toLowerCase();
-            return !query
-              || snippet.prefix.toLowerCase().startsWith(query)
-              || snippet.label.toLowerCase().startsWith(query);
-          });
-          const symbolKinds: Record<CompletionSymbolKind, Monaco.languages.CompletionItemKind> = {
-            keyword: monaco.languages.CompletionItemKind.Keyword,
-            class: monaco.languages.CompletionItemKind.Class,
-            function: monaco.languages.CompletionItemKind.Function,
-            constant: monaco.languages.CompletionItemKind.Constant,
-            module: monaco.languages.CompletionItemKind.Module,
-            property: monaco.languages.CompletionItemKind.Property,
-          };
-          return {
-            suggestions: [
-              ...snippets.map((snippet, index) => ({
-                label: snippet.label,
-                detail: snippet.detail,
-                documentation: snippet.detail,
-                filterText: `${snippet.prefix} ${snippet.label}`,
-                insertText: snippet.body,
-                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-                kind: monaco.languages.CompletionItemKind.Snippet,
-                range,
-                sortText: `00${index.toString().padStart(2, '0')}`,
-              })),
-              ...getCompletionSymbols(language, prefix).map((symbol) => ({
-                label: symbol.label,
-                detail: symbol.detail,
-                documentation: symbol.detail,
-                filterText: symbol.label,
-                insertText: symbol.insertText || symbol.label,
-                kind: symbolKinds[symbol.kind],
-                range,
-                sortText: `10${symbol.label.toLowerCase()}`,
-              })),
-            ],
-          };
-        },
-      }));
-    }
+function resolveCatalogLanguage(...candidates: unknown[]): string {
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string' || !candidate) continue;
+    const normalized = normalizeLanguage(candidate);
+    if (supportedLanguages.has(normalized) || supportsFallbackFormatting(normalized)) return normalized;
   }
+  return '';
+}
 
-  if (config.formatting) {
-    const nativeFormattingLanguages = new Set(['javascript', 'typescript']);
-    const formattingLanguages = new Set([
-      ...completionLanguages,
-      'typescript', 'ruby', 'shell', 'bash', 'haskell', 'r',
-    ]);
-    for (const language of formattingLanguages) {
-      if (!supportsFallbackFormatting(language) || nativeFormattingLanguages.has(language)) continue;
-      providerDisposables.push(monaco.languages.registerDocumentFormattingEditProvider(language, {
-        provideDocumentFormattingEdits(model, options) {
-          const formatted = formatCode(model.getValue(), language, options.tabSize);
-          if (formatted === model.getValue()) return [];
-          return [{ range: model.getFullModelRange(), text: formatted }];
-        },
-      }));
-    }
+function collectLanguageBindings(): Map<string, string> {
+  const bindings = new Map<string, string>();
+  for (const language of supportedLanguages) bindings.set(language, language);
+  const hydroLanguages = (window as any).LANGS || {};
+  for (const [languageKey, rawConfig] of Object.entries<any>(hydroLanguages)) {
+    const languageConfig = rawConfig || {};
+    const highlight = typeof languageConfig.highlight === 'string'
+      ? languageConfig.highlight.split(/\s+/)[0]
+      : '';
+    const monacoLanguage = String(languageConfig.monaco || highlight || languageKey || '');
+    const catalogLanguage = resolveCatalogLanguage(
+      monacoLanguage,
+      highlight,
+      languageKey,
+    );
+    if (monacoLanguage && catalogLanguage) bindings.set(monacoLanguage, catalogLanguage);
+  }
+  return bindings;
+}
+
+function catalogLanguageFor(monacoLanguage: string): string {
+  return languageBindings.get(monacoLanguage)
+    || resolveCatalogLanguage(monacoLanguage);
+}
+
+function ensureCompletionProvider(
+  monaco: typeof Monaco,
+  monacoLanguage: string,
+  catalogLanguage: string,
+) {
+  if (!config.completion || !catalogLanguage || completionProviderLanguages.has(monacoLanguage)) return;
+  completionProviderLanguages.add(monacoLanguage);
+  try {
+    providerDisposables.push(monaco.languages.registerCompletionItemProvider(monacoLanguage, {
+      provideCompletionItems(model, position) {
+        const language = catalogLanguageFor(model.getLanguageId()) || catalogLanguage;
+        const word = model.getWordUntilPosition(position);
+        const range = {
+          startLineNumber: position.lineNumber,
+          endLineNumber: position.lineNumber,
+          startColumn: word.startColumn,
+          endColumn: word.endColumn,
+        };
+        const prefix = model.getValueInRange(range);
+        const query = prefix.toLowerCase();
+        const snippets = getCompletionSnippets(language).filter((snippet) => !query
+          || snippet.prefix.toLowerCase().startsWith(query)
+          || snippet.label.toLowerCase().startsWith(query));
+        const symbols = getCompletionSymbols(language, prefix);
+        runtimeStatus.completionRequests += 1;
+        runtimeStatus.lastCompletion = {
+          language: model.getLanguageId(),
+          prefix,
+          count: snippets.length + symbols.length,
+        };
+        const symbolKinds: Record<CompletionSymbolKind, Monaco.languages.CompletionItemKind> = {
+          keyword: monaco.languages.CompletionItemKind.Keyword,
+          class: monaco.languages.CompletionItemKind.Class,
+          function: monaco.languages.CompletionItemKind.Function,
+          constant: monaco.languages.CompletionItemKind.Constant,
+          module: monaco.languages.CompletionItemKind.Module,
+          property: monaco.languages.CompletionItemKind.Property,
+        };
+        return {
+          suggestions: [
+            ...snippets.map((snippet, index) => ({
+              label: snippet.label,
+              detail: snippet.detail,
+              documentation: snippet.detail,
+              filterText: `${snippet.prefix} ${snippet.label}`,
+              insertText: snippet.body,
+              insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+              kind: monaco.languages.CompletionItemKind.Snippet,
+              range,
+              sortText: `00${index.toString().padStart(2, '0')}`,
+            })),
+            ...symbols.map((symbol, index) => ({
+              label: symbol.label,
+              detail: symbol.detail,
+              documentation: symbol.detail,
+              filterText: symbol.label,
+              insertText: symbol.insertText || symbol.label,
+              kind: symbolKinds[symbol.kind],
+              preselect: index === 0,
+              range,
+              sortText: `10${symbol.label.toLowerCase()}`,
+            })),
+          ],
+        };
+      },
+    }));
+  } catch (error) {
+    completionProviderLanguages.delete(monacoLanguage);
+    throw error;
+  }
+  runtimeStatus.registeredLanguages = Array.from(completionProviderLanguages).sort();
+}
+
+function ensureFormattingProvider(
+  monaco: typeof Monaco,
+  monacoLanguage: string,
+  catalogLanguage: string,
+) {
+  const nativeFormattingLanguages = new Set(['javascript', 'typescript']);
+  if (!config.formatting
+    || !supportsFallbackFormatting(catalogLanguage)
+    || nativeFormattingLanguages.has(catalogLanguage)
+    || formattingProviderLanguages.has(monacoLanguage)) return;
+  formattingProviderLanguages.add(monacoLanguage);
+  providerDisposables.push(monaco.languages.registerDocumentFormattingEditProvider(monacoLanguage, {
+    provideDocumentFormattingEdits(model, options) {
+      const formatted = formatCode(model.getValue(), catalogLanguage, options.tabSize);
+      if (formatted === model.getValue()) return [];
+      return [{ range: model.getFullModelRange(), text: formatted }];
+    },
+  }));
+}
+
+function ensureLanguageProviders(monaco: typeof Monaco, monacoLanguage: string, catalogLanguage?: string) {
+  const language = catalogLanguage || catalogLanguageFor(monacoLanguage);
+  if (!language) return;
+  languageBindings.set(monacoLanguage, language);
+  ensureCompletionProvider(monaco, monacoLanguage, language);
+  ensureFormattingProvider(monaco, monacoLanguage, language);
+}
+
+function registerProviders(monaco: typeof Monaco) {
+  for (const [monacoLanguage, catalogLanguage] of collectLanguageBindings()) {
+    languageBindings.set(monacoLanguage, catalogLanguage);
+    ensureLanguageProviders(monaco, monacoLanguage, catalogLanguage);
   }
 }
 
@@ -165,7 +249,7 @@ function getDraftContext(language: string): DraftContext {
     domainId: String(pdoc.domainId || document.documentElement.dataset.domainId || 'system'),
     problemId: String(pdoc.pid || pdoc.docId || window.location.pathname),
     contestId: String(tdoc.docId || query.get('tid') || 'normal'),
-    language: normalizeLanguage(language) || 'plaintext',
+    language: catalogLanguageFor(language) || normalizeLanguage(language) || 'plaintext',
   };
 }
 
@@ -202,7 +286,8 @@ function insertTemplate(editor: Monaco.editor.IStandaloneCodeEditor, monaco: typ
 }
 
 function showTemplatePicker(editor: Monaco.editor.IStandaloneCodeEditor, monaco: typeof Monaco) {
-  const language = editor.getModel()?.getLanguageId() || '';
+  const modelLanguage = editor.getModel()?.getLanguageId() || '';
+  const language = catalogLanguageFor(modelLanguage) || modelLanguage;
   const templates = getTemplates(language);
   if (!templates.length) {
     Notification.info(i18n('No template is available for this language'));
@@ -267,9 +352,11 @@ class EditorSession {
   private autosaveTimer?: ReturnType<typeof setTimeout>;
   private diagnosticsTimer?: ReturnType<typeof setTimeout>;
   private restoreTimer?: ReturnType<typeof setTimeout>;
+  private completionOptionsTimer?: ReturnType<typeof setTimeout>;
   private lastDiagnosticCount = 0;
   private statusNode = document.createElement('div');
   private statusWidget: Monaco.editor.IOverlayWidget;
+  private completionExpansionContext: Monaco.editor.IContextKey<boolean>;
   private disposed = false;
 
   constructor(
@@ -285,16 +372,31 @@ class EditorSession {
         preference: monaco.editor.OverlayWidgetPositionPreference.BOTTOM_RIGHT_CORNER,
       }),
     };
+    this.completionExpansionContext = this.editor.createContextKey(
+      'hydroBatterCanExpandCompletion',
+      false,
+    );
     this.editor.addOverlayWidget(this.statusWidget);
     this.installActions();
     this.disposables.push(
       this.editor.onDidChangeModel(() => this.bindModel()),
+      this.editor.onDidChangeCursorPosition(() => this.updateCompletionExpansionContext()),
+      this.editor.onDidChangeConfiguration(() => this.scheduleCompletionOptions()),
       this.editor.onDidDispose(() => this.dispose()),
     );
     this.bindModel();
   }
 
   private installActions() {
+    if (config.completion) {
+      this.disposables.push(this.editor.addAction({
+        id: 'hydro-batter.expand-completion',
+        label: i18n('Batter editor: expand completion'),
+        keybindings: [this.monaco.KeyCode.Tab],
+        precondition: 'hydroBatterCanExpandCompletion && !suggestWidgetVisible && !inSnippetMode',
+        run: () => this.expandUniqueCompletion(),
+      }));
+    }
     if (config.templates) {
       this.disposables.push(this.editor.addAction({
         id: 'hydro-batter.insert-template',
@@ -320,7 +422,11 @@ class EditorSession {
             if (model) updateModelText(
               this.editor,
               this.monaco,
-              formatCode(model.getValue(), model.getLanguageId(), model.getOptions().tabSize),
+              formatCode(
+                model.getValue(),
+                catalogLanguageFor(model.getLanguageId()) || model.getLanguageId(),
+                model.getOptions().tabSize,
+              ),
               'hydro-batter-format',
             );
           }
@@ -363,32 +469,91 @@ class EditorSession {
     }
   }
 
+  private getUniqueCompletionExpansion() {
+    if (!config.completion) return null;
+    const model = this.editor.getModel();
+    const position = this.editor.getPosition();
+    if (!model || !position) return null;
+    const language = catalogLanguageFor(model.getLanguageId());
+    if (!language) return null;
+    const word = model.getWordUntilPosition(position);
+    const range = new this.monaco.Range(
+      position.lineNumber,
+      word.startColumn,
+      position.lineNumber,
+      word.endColumn,
+    );
+    const prefix = model.getValueInRange(range);
+    const symbol = getUniqueCompletionSymbol(language, prefix);
+    if (!symbol) return null;
+    return { range, text: symbol.insertText || symbol.label };
+  }
+
+  private updateCompletionExpansionContext() {
+    this.completionExpansionContext.set(Boolean(this.getUniqueCompletionExpansion()));
+  }
+
+  private expandUniqueCompletion() {
+    const completion = this.getUniqueCompletionExpansion();
+    if (!completion) return;
+    this.editor.pushUndoStop();
+    this.editor.executeEdits('hydro-batter-tab-completion', [{ range: completion.range, text: completion.text }]);
+    this.editor.pushUndoStop();
+    this.editor.focus();
+  }
+
+  private scheduleCompletionOptions() {
+    if (!config.completion || this.disposed) return;
+    clearTimeout(this.completionOptionsTimer);
+    this.completionOptionsTimer = setTimeout(() => this.applyCompletionOptions());
+  }
+
+  private applyCompletionOptions() {
+    if (!config.completion || this.disposed) return;
+    const rawOptions = this.editor.getRawOptions();
+    const quickSuggestions = rawOptions.quickSuggestions;
+    const quickSuggestionsReady = quickSuggestions === true
+      || (typeof quickSuggestions === 'object' && quickSuggestions?.other === true);
+    if (rawOptions.acceptSuggestionOnEnter === 'on'
+      && quickSuggestionsReady
+      && (rawOptions.quickSuggestionsDelay ?? 10) <= 50
+      && rawOptions.snippetSuggestions === 'top'
+      && rawOptions.suggestOnTriggerCharacters !== false
+      && rawOptions.tabCompletion === 'on') return;
+    this.editor.updateOptions({
+      acceptSuggestionOnEnter: 'on',
+      quickSuggestions: { other: true, comments: false, strings: false },
+      quickSuggestionsDelay: 0,
+      snippetSuggestions: 'top',
+      suggestOnTriggerCharacters: true,
+      tabCompletion: 'on',
+    });
+  }
+
   private bindModel() {
     this.modelDisposables.forEach((item) => item.dispose());
     this.modelDisposables = [];
     clearTimeout(this.autosaveTimer);
     clearTimeout(this.diagnosticsTimer);
     clearTimeout(this.restoreTimer);
+    clearTimeout(this.completionOptionsTimer);
     const model = this.editor.getModel();
     if (!model) return;
-    const language = normalizeLanguage(model.getLanguageId());
+    const language = catalogLanguageFor(model.getLanguageId());
     if (!getSupportedLanguages().includes(language) && !supportsFallbackFormatting(language)) {
       this.statusNode.style.display = 'none';
+      this.completionExpansionContext.set(false);
       return;
     }
+    ensureLanguageProviders(this.monaco, model.getLanguageId(), language);
     this.statusNode.style.display = '';
-    this.editor.updateOptions({
-      acceptSuggestionOnEnter: 'on',
-      quickSuggestions: { other: true, comments: false, strings: false },
-      quickSuggestionsDelay: 50,
-      snippetSuggestions: 'top',
-      suggestOnTriggerCharacters: true,
-      tabCompletion: 'on',
-    });
+    this.applyCompletionOptions();
     this.modelDisposables.push(model.onDidChangeContent(() => {
+      this.updateCompletionExpansionContext();
       this.scheduleAutosave();
       this.scheduleDiagnostics();
     }));
+    this.updateCompletionExpansionContext();
     this.runDiagnostics();
     this.updateStatus();
     // Monaco's creation event fires before Scratchpad registers its Redux change listener.
@@ -416,7 +581,10 @@ class EditorSession {
   private runDiagnostics() {
     const model = this.editor.getModel();
     if (!model || !config.diagnostics) return;
-    const diagnostics = diagnoseCode(model.getValue(), model.getLanguageId());
+    const diagnostics = diagnoseCode(
+      model.getValue(),
+      catalogLanguageFor(model.getLanguageId()) || model.getLanguageId(),
+    );
     this.lastDiagnosticCount = diagnostics.length;
     this.monaco.editor.setModelMarkers(model, MARKER_OWNER, diagnostics.map((item) => ({
       severity: markerSeverity(this.monaco, item.severity),
@@ -466,7 +634,10 @@ class EditorSession {
   private updateStatus() {
     const model = this.editor.getModel();
     if (!model) return;
-    const parts: string[] = [];
+    const parts: string[] = [`Batter ${PLUGIN_VERSION}`];
+    if (config.completion && catalogLanguageFor(model.getLanguageId())) {
+      parts.push(i18n('Completion ready'));
+    }
     if (config.autosave) {
       const draft = readDraft(localStorage, getDraftContext(model.getLanguageId()));
       if (draft) parts.push(i18n('Draft saved at {0}', new Date(draft.updatedAt).toLocaleTimeString([], {
@@ -475,7 +646,7 @@ class EditorSession {
       })));
     }
     if (this.lastDiagnosticCount) parts.push(i18n('{0} diagnostics', this.lastDiagnosticCount));
-    this.statusNode.textContent = parts.join(' · ') || 'Batter';
+    this.statusNode.textContent = parts.join(' · ');
     this.statusNode.dataset.level = this.lastDiagnosticCount ? 'warning' : 'normal';
   }
 
@@ -486,6 +657,7 @@ class EditorSession {
     clearTimeout(this.autosaveTimer);
     clearTimeout(this.diagnosticsTimer);
     clearTimeout(this.restoreTimer);
+    clearTimeout(this.completionOptionsTimer);
     try {
       const model = this.editor.getModel();
       if (model && !model.isDisposed()) this.monaco.editor.setModelMarkers(model, MARKER_OWNER, []);
@@ -497,6 +669,7 @@ class EditorSession {
     } catch { /* Editor may already be disposed. */ }
     sessions.delete(this);
     attachedEditors.delete(this.editor);
+    runtimeStatus.editorCount = sessions.size;
   }
 }
 
@@ -505,12 +678,16 @@ function attachEditor(editor: Monaco.editor.IStandaloneCodeEditor, monaco: typeo
   const session = new EditorSession(editor, monaco);
   attachedEditors.set(editor, session);
   sessions.add(session);
+  runtimeStatus.editorCount = sessions.size;
 }
 
 function getSelectedLanguage(): string {
   const languageKey = String(($('[name="lang"]') as any).val?.() || '');
   const langConfig = (window as any).LANGS?.[languageKey];
-  return normalizeLanguage(langConfig?.monaco || langConfig?.highlight || languageKey || 'plaintext');
+  const highlight = typeof langConfig?.highlight === 'string'
+    ? langConfig.highlight.split(/\s+/)[0]
+    : '';
+  return String(langConfig?.monaco || highlight || normalizeLanguage(languageKey) || 'plaintext');
 }
 
 async function createSubmissionEditor(monaco: typeof Monaco, registerAction: Function, customOptions: object) {
@@ -567,8 +744,10 @@ async function createSubmissionEditor(monaco: typeof Monaco, registerAction: Fun
   editor.focus();
 }
 
-addPage(new NamedPage(PAGE_NAMES, async (pageName) => {
+addPage(new AutoloadPage('hydro-batter-code-edit', async (pageName) => {
+  runtimeStatus.pageName = pageName;
   config = getConfig();
+  runtimeStatus.completionEnabled = config.completion;
   if (!config.enabled) return;
   installStyles();
   try {
@@ -577,24 +756,34 @@ addPage(new NamedPage(PAGE_NAMES, async (pageName) => {
     console.warn('Hydro Batter Code Edit could not clean local drafts.', error);
   }
 
-  const loaded = await loadMonaco([]);
-  monacoApi = loaded.monaco;
-  registerProviders(monacoApi);
-  providerDisposables.push(monacoApi.editor.onDidCreateEditor((editor) => attachEditor(
-    editor as Monaco.editor.IStandaloneCodeEditor,
-    monacoApi,
-  )));
-  monacoApi.editor.getEditors().forEach((editor) => attachEditor(
-    editor as Monaco.editor.IStandaloneCodeEditor,
-    monacoApi,
-  ));
+  try {
+    const loaded = await loadMonaco([]);
+    monacoApi = loaded.monaco;
+    registerProviders(monacoApi);
+    providerDisposables.push(monacoApi.editor.onDidCreateEditor((editor) => attachEditor(
+      editor as Monaco.editor.IStandaloneCodeEditor,
+      monacoApi,
+    )));
+    monacoApi.editor.getEditors().forEach((editor) => attachEditor(
+      editor as Monaco.editor.IStandaloneCodeEditor,
+      monacoApi,
+    ));
 
-  if (SUBMIT_PAGE_NAMES.has(pageName)) {
-    await new Promise((resolve) => setTimeout(resolve, 80));
-    await createSubmissionEditor(monacoApi, loaded.registerAction, loaded.customOptions || {});
+    if (SUBMIT_PAGE_NAMES.has(pageName) || document.querySelector('textarea[name="code"]')) {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      await createSubmissionEditor(monacoApi, loaded.registerAction, loaded.customOptions || {});
+    }
+
+    runtimeStatus.loaded = true;
+    console.info(
+      `[Hydro Batter Code Edit ${PLUGIN_VERSION}] loaded; completion providers:`,
+      runtimeStatus.registeredLanguages.join(', '),
+    );
+    window.addEventListener('beforeunload', () => {
+      sessions.forEach((session) => session.saveNow());
+    }, { once: true });
+  } catch (error) {
+    runtimeStatus.error = error instanceof Error ? error.message : String(error);
+    console.error(`[Hydro Batter Code Edit ${PLUGIN_VERSION}] initialization failed.`, error);
   }
-
-  window.addEventListener('beforeunload', () => {
-    sessions.forEach((session) => session.saveNow());
-  }, { once: true });
 }));

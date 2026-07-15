@@ -500,9 +500,16 @@ const LANGUAGE_SYMBOLS: Record<string, CompletionSymbol[]> = {
 
 const ALIASES: Record<string, string> = {
     cc: 'cpp',
+    cxx: 'cpp',
+    cplusplus: 'cpp',
+    'c_cpp': 'cpp',
     'c++': 'cpp',
+    'text/x-c++src': 'cpp',
+    'text/x-csrc': 'c',
     py: 'python',
     py3: 'python',
+    python2: 'python',
+    python3: 'python',
     js: 'javascript',
     node: 'javascript',
     nodejs: 'javascript',
@@ -514,7 +521,9 @@ const ALIASES: Record<string, string> = {
 };
 
 export function normalizeLanguage(language: string): string {
-    const base = (language || '').toLowerCase().split('.')[0];
+    const value = (language || '').trim().toLowerCase().split(/\s+/)[0].replace(/^language-/, '');
+    if (ALIASES[value]) return ALIASES[value];
+    const base = value.split('.')[0];
     return ALIASES[base] || base;
 }
 
@@ -554,9 +563,18 @@ export function getCompletionSymbols(language: string, prefix = ''): CompletionS
     });
 }
 
+export function getUniqueCompletionSymbol(language: string, prefix: string): CompletionSymbol | undefined {
+    if (prefix.length < 2) return undefined;
+    const matches = getCompletionSymbols(language, prefix).filter(
+        (item) => (item.insertText || item.label).toLowerCase() !== prefix.toLowerCase(),
+    );
+    return matches.length === 1 ? matches[0] : undefined;
+}
+
 export function getSupportedLanguages(): string[] {
     return Array.from(new Set([
         ...Object.keys(MAIN_TEMPLATES),
         ...Object.keys(LANGUAGE_SNIPPETS),
+        ...Object.keys(LANGUAGE_SYMBOLS),
     ]));
 }

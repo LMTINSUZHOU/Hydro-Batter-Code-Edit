@@ -86,6 +86,7 @@ export function apply(ctx: Context) {
     ctx.inject(['i18n'], (child: Context) => {
         child.i18n.load('en', {
             setting_hydro_batter_code_edit: 'Batter Code Editor',
+            'Batter editor: expand completion': 'Batter editor: expand completion',
             'Batter editor: insert template': 'Batter editor: insert template',
             'Batter editor: format document': 'Batter editor: format document',
             'Batter editor: save local draft': 'Batter editor: save local draft',
@@ -97,12 +98,14 @@ export function apply(ctx: Context) {
             'Local draft cleared': 'Local draft cleared',
             'No local draft was found': 'No local draft was found',
             'No template is available for this language': 'No template is available for this language',
+            'Completion ready': 'Completion ready',
             'Draft saved at {0}': 'Draft saved at {0}',
             '{0} diagnostics': '{0} diagnostics',
             Cancel: 'Cancel',
         });
         child.i18n.load('zh', {
             setting_hydro_batter_code_edit: 'Batter 代码编辑器',
+            'Batter editor: expand completion': 'Batter 编辑器：展开补全',
             'Batter editor: insert template': 'Batter 编辑器：插入模板',
             'Batter editor: format document': 'Batter 编辑器：格式化文档',
             'Batter editor: save local draft': 'Batter 编辑器：保存本地草稿',
@@ -114,6 +117,7 @@ export function apply(ctx: Context) {
             'Local draft cleared': '本地草稿已清除',
             'No local draft was found': '没有找到本地草稿',
             'No template is available for this language': '该语言暂无可用模板',
+            'Completion ready': '补全已就绪',
             'Draft saved at {0}': '草稿已于 {0} 保存',
             '{0} diagnostics': '{0} 个诊断',
             Cancel: '取消',
