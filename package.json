@@ -1,6 +1,6 @@
 {
   "name": "hydro-batter-code-edit",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Monaco editor enhancements for HydroOJ: completion, templates, formatting, diagnostics and local autosave.",
   "main": "index.ts",
   "type": "commonjs",

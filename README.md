@@ -29,7 +29,7 @@ hydrooj addon add "$(pwd)"
 
 输入符号前缀即可显示候选，例如 C++ 中输入 `qu` 得到 `queue`，Python 中输入 `pri` 得到 `print`，Java 中输入 `Pri` 得到 `PriorityQueue`。候选出现后可按 <kbd>Tab</kbd>/<kbd>Enter</kbd> 或点击完成输入；只有一个匹配项时，即使候选框还没来得及出现，按 <kbd>Tab</kbd> 也会直接展开（如 `qu` → `queue`）。
 
-编辑器右下角显示 `Batter 1.0.2 · 补全已就绪` 时，表示插件已经挂载到当前 Monaco 编辑器。插件会读取站点的 `LANGS` 配置，并兼容 `cpp`、`c_cpp`、`text/x-c++src`、`python3` 等常见 Monaco/主题语言别名。
+编辑器右下角显示 `Batter 1.0.3 · 补全已就绪` 时，表示插件已经挂载到当前 Monaco 编辑器。插件会读取站点的 `LANGS` 配置，并兼容 `cpp`、`c_cpp`、`text/x-c++src`、`python3` 等常见 Monaco/主题语言别名。
 
 | 操作 | 快捷键 |
 | --- | --- |
@@ -40,7 +40,7 @@ hydrooj addon add "$(pwd)"
 
 恢复和清除草稿也可以从 Monaco 右键菜单或命令面板执行。
 
-如果升级后仍显示旧版本，请重启 Hydro 服务并对题目页执行一次强制刷新。浏览器控制台中输入 `window.HydroBatterCodeEdit` 可以查看已注册语言、编辑器数量、补全调用次数和最近一次补全结果；对象中的 `version` 应为 `1.0.2`。
+如果升级后仍显示旧版本，请重启 Hydro 服务并对题目页执行一次强制刷新。浏览器控制台中输入 `UiContext.hydroBatterCodeEdit` 可确认后端插件版本，输入 `window.HydroBatterCodeEdit` 可以查看前端版本、已注册语言、编辑器数量、补全调用次数和最近一次补全结果；两个对象中的版本都应为 `1.0.3`。
 
 ## 配置
 

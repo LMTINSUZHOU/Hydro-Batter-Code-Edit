@@ -18,7 +18,7 @@ const SUBMIT_PAGE_NAMES = new Set([
   'contest_detail_problem_submit',
   'homework_detail_problem_submit',
 ]);
-const PLUGIN_VERSION = '1.0.2';
+const PLUGIN_VERSION = '1.0.3';
 const MARKER_OWNER = 'hydro-batter-code-edit';
 const supportedLanguages = new Set(getSupportedLanguages());
 const sessions = new Set<EditorSession>();
@@ -33,6 +33,7 @@ let providerDisposables: Monaco.IDisposable[] = [];
 
 interface RuntimeStatus {
   version: string;
+  serverVersion?: string;
   loaded: boolean;
   pageName: string;
   completionEnabled: boolean;
@@ -45,6 +46,7 @@ interface RuntimeStatus {
 
 const runtimeStatus: RuntimeStatus = {
   version: PLUGIN_VERSION,
+  serverVersion: (window as any).UiContext?.hydroBatterCodeEdit?.version,
   loaded: false,
   pageName: '',
   completionEnabled: false,
@@ -356,7 +358,6 @@ class EditorSession {
   private lastDiagnosticCount = 0;
   private statusNode = document.createElement('div');
   private statusWidget: Monaco.editor.IOverlayWidget;
-  private completionExpansionContext: Monaco.editor.IContextKey<boolean>;
   private disposed = false;
 
   constructor(
@@ -372,15 +373,11 @@ class EditorSession {
         preference: monaco.editor.OverlayWidgetPositionPreference.BOTTOM_RIGHT_CORNER,
       }),
     };
-    this.completionExpansionContext = this.editor.createContextKey(
-      'hydroBatterCanExpandCompletion',
-      false,
-    );
     this.editor.addOverlayWidget(this.statusWidget);
+    this.installCompletionKeyHandler();
     this.installActions();
     this.disposables.push(
       this.editor.onDidChangeModel(() => this.bindModel()),
-      this.editor.onDidChangeCursorPosition(() => this.updateCompletionExpansionContext()),
       this.editor.onDidChangeConfiguration(() => this.scheduleCompletionOptions()),
       this.editor.onDidDispose(() => this.dispose()),
     );
@@ -388,14 +385,9 @@ class EditorSession {
   }
 
   private installActions() {
-    if (config.completion) {
-      this.disposables.push(this.editor.addAction({
-        id: 'hydro-batter.expand-completion',
-        label: i18n('Batter editor: expand completion'),
-        keybindings: [this.monaco.KeyCode.Tab],
-        precondition: 'hydroBatterCanExpandCompletion && !suggestWidgetVisible && !inSnippetMode',
-        run: () => this.expandUniqueCompletion(),
-      }));
+    if (!(this.editor as any)._standaloneKeybindingService) {
+      this.installFallbackActionKeyHandler();
+      return;
     }
     if (config.templates) {
       this.disposables.push(this.editor.addAction({
@@ -414,23 +406,7 @@ class EditorSession {
         keybindings: [this.monaco.KeyMod.Shift | this.monaco.KeyMod.Alt | this.monaco.KeyCode.KeyF],
         contextMenuGroupId: '1_modification',
         contextMenuOrder: 2,
-        run: async () => {
-          const action = this.editor.getAction('editor.action.formatDocument');
-          if (action?.isSupported()) await action.run();
-          else {
-            const model = this.editor.getModel();
-            if (model) updateModelText(
-              this.editor,
-              this.monaco,
-              formatCode(
-                model.getValue(),
-                catalogLanguageFor(model.getLanguageId()) || model.getLanguageId(),
-                model.getOptions().tabSize,
-              ),
-              'hydro-batter-format',
-            );
-          }
-        },
+        run: () => this.formatDocument(),
       }));
     }
     if (config.autosave) {
@@ -469,6 +445,92 @@ class EditorSession {
     }
   }
 
+  private installFallbackActionKeyHandler() {
+    const domNode = this.editor.getDomNode();
+    if (!domNode) return;
+    const onKeydown = (event: KeyboardEvent) => {
+      if (!this.editor.hasTextFocus()) return;
+      const primaryModifier = event.ctrlKey || event.metaKey;
+      if (config.templates
+        && primaryModifier
+        && event.altKey
+        && event.code === 'KeyT') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        showTemplatePicker(this.editor, this.monaco);
+        return;
+      }
+      if (config.formatting
+        && event.shiftKey
+        && event.altKey
+        && event.code === 'KeyF') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        void this.formatDocument();
+        return;
+      }
+      if (config.autosave
+        && primaryModifier
+        && !event.altKey
+        && !event.shiftKey
+        && event.code === 'KeyS') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        this.saveNow();
+        Notification.info(i18n('Local draft saved'));
+      }
+    };
+    domNode.addEventListener('keydown', onKeydown, true);
+    this.disposables.push({
+      dispose: () => domNode.removeEventListener('keydown', onKeydown, true),
+    });
+  }
+
+  private async formatDocument() {
+    const action = this.editor.getAction('editor.action.formatDocument');
+    if (action?.isSupported()) {
+      await action.run();
+      return;
+    }
+    const model = this.editor.getModel();
+    if (model) updateModelText(
+      this.editor,
+      this.monaco,
+      formatCode(
+        model.getValue(),
+        catalogLanguageFor(model.getLanguageId()) || model.getLanguageId(),
+        model.getOptions().tabSize,
+      ),
+      'hydro-batter-format',
+    );
+  }
+
+  private installCompletionKeyHandler() {
+    if (!config.completion) return;
+    const domNode = this.editor.getDomNode();
+    if (!domNode) return;
+    const onKeydown = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab'
+        || event.altKey
+        || event.ctrlKey
+        || event.metaKey
+        || event.shiftKey
+        || event.isComposing
+        || !this.editor.hasTextFocus()) return;
+      if (domNode.querySelector('.suggest-widget.visible')) return;
+      const snippetController = this.editor.getContribution('snippetController2') as any;
+      if (snippetController?.isInSnippet?.()) return;
+      if (!this.getUniqueCompletionExpansion()) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.expandUniqueCompletion();
+    };
+    domNode.addEventListener('keydown', onKeydown, true);
+    this.disposables.push({
+      dispose: () => domNode.removeEventListener('keydown', onKeydown, true),
+    });
+  }
+
   private getUniqueCompletionExpansion() {
     if (!config.completion) return null;
     const model = this.editor.getModel();
@@ -487,10 +549,6 @@ class EditorSession {
     const symbol = getUniqueCompletionSymbol(language, prefix);
     if (!symbol) return null;
     return { range, text: symbol.insertText || symbol.label };
-  }
-
-  private updateCompletionExpansionContext() {
-    this.completionExpansionContext.set(Boolean(this.getUniqueCompletionExpansion()));
   }
 
   private expandUniqueCompletion() {
@@ -542,18 +600,15 @@ class EditorSession {
     const language = catalogLanguageFor(model.getLanguageId());
     if (!getSupportedLanguages().includes(language) && !supportsFallbackFormatting(language)) {
       this.statusNode.style.display = 'none';
-      this.completionExpansionContext.set(false);
       return;
     }
     ensureLanguageProviders(this.monaco, model.getLanguageId(), language);
     this.statusNode.style.display = '';
     this.applyCompletionOptions();
     this.modelDisposables.push(model.onDidChangeContent(() => {
-      this.updateCompletionExpansionContext();
       this.scheduleAutosave();
       this.scheduleDiagnostics();
     }));
-    this.updateCompletionExpansionContext();
     this.runDiagnostics();
     this.updateStatus();
     // Monaco's creation event fires before Scratchpad registers its Redux change listener.

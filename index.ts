@@ -18,11 +18,12 @@ declare module 'hydrooj' {
     }
 
     interface UiContextBase {
-        hydroBatterCodeEdit?: BatterEditorConfig;
+        hydroBatterCodeEdit?: BatterEditorConfig & { version: string };
     }
 }
 
 export const name = 'hydro-batter-code-edit';
+export const version = '1.0.3';
 
 const settingSchema = Schema.object({
     'hydro-batter-code-edit': Schema.object({
@@ -63,8 +64,9 @@ function getNumber(key: keyof import('hydrooj').SystemKeys, fallback: number): n
     return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
-function getPublicConfig(): BatterEditorConfig {
+function getPublicConfig(): BatterEditorConfig & { version: string } {
     return {
+        version,
         enabled: getBoolean('hydro-batter-code-edit.enabled', DEFAULT_EDITOR_CONFIG.enabled),
         completion: getBoolean('hydro-batter-code-edit.completion', DEFAULT_EDITOR_CONFIG.completion),
         templates: getBoolean('hydro-batter-code-edit.templates', DEFAULT_EDITOR_CONFIG.templates),
@@ -86,7 +88,6 @@ export function apply(ctx: Context) {
     ctx.inject(['i18n'], (child: Context) => {
         child.i18n.load('en', {
             setting_hydro_batter_code_edit: 'Batter Code Editor',
-            'Batter editor: expand completion': 'Batter editor: expand completion',
             'Batter editor: insert template': 'Batter editor: insert template',
             'Batter editor: format document': 'Batter editor: format document',
             'Batter editor: save local draft': 'Batter editor: save local draft',
@@ -105,7 +106,6 @@ export function apply(ctx: Context) {
         });
         child.i18n.load('zh', {
             setting_hydro_batter_code_edit: 'Batter 代码编辑器',
-            'Batter editor: expand completion': 'Batter 编辑器：展开补全',
             'Batter editor: insert template': 'Batter 编辑器：插入模板',
             'Batter editor: format document': 'Batter 编辑器：格式化文档',
             'Batter editor: save local draft': 'Batter 编辑器：保存本地草稿',
@@ -133,7 +133,9 @@ export function apply(ctx: Context) {
             get: getPublicConfig,
         });
         return () => {
-            delete (UiContextBase as UiContextBase & { hydroBatterCodeEdit?: BatterEditorConfig }).hydroBatterCodeEdit;
+            delete (UiContextBase as UiContextBase & {
+                hydroBatterCodeEdit?: BatterEditorConfig & { version: string };
+            }).hydroBatterCodeEdit;
         };
     });
 }
