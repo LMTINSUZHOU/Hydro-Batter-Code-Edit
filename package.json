@@ -1,0 +1,47 @@
+{
+  "name": "hydro-batter-code-edit",
+  "version": "1.0.0",
+  "description": "Monaco editor enhancements for HydroOJ: completion, templates, formatting, diagnostics and local autosave.",
+  "main": "index.ts",
+  "type": "commonjs",
+  "files": [
+    "frontend",
+    "src",
+    "index.ts",
+    "types.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "peerDependencies": {
+    "@hydrooj/ui-default": ">=4.58.0",
+    "hydrooj": ">=5.0.0"
+  },
+  "devDependencies": {
+    "@hydrooj/ui-default": "4.58.4",
+    "@types/node": "^24.10.0",
+    "hydrooj": "5.0.4",
+    "monaco-editor": "0.52.2",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/LMTINSUZHOU/Hydro-Batter-Code-Edit.git"
+  },
+  "keywords": [
+    "hydrooj",
+    "hydro-plugin",
+    "monaco-editor",
+    "online-judge"
+  ],
+  "author": "Albert_Li <lmt_in_suzhou@outlook.com>",
+  "license": "MIT"
+}
