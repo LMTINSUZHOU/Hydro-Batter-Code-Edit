@@ -7,7 +7,7 @@
 - 代码格式化：优先使用 Monaco 已注册的格式化能力，并为常用 OJ 语言提供保守的缩进/空白格式化。
 - 即时代码诊断：检查括号、全角符号、Git 冲突标记、可疑空语句、入口函数、Java `Main` 类和 Python 混合缩进。
 - 自动保存：按用户、域、题目、比赛和语言隔离地保存浏览器本地草稿；空编辑器会自动恢复最近草稿。
-- 提交页 Monaco：把 Hydro 原本的提交页文本框升级为 Monaco，同时也增强题目页的 Scratchpad Monaco。
+- 只增强现有 Monaco：题目 Scratchpad 等已有编辑器会获得增强，普通提交 textarea 保持 Hydro 原样，不会额外生成代码框。
 
 ## 安装
 
@@ -25,11 +25,11 @@ hydrooj addon add "$(pwd)"
 
 ## 使用
 
-打开普通题目、比赛题目或作业题目的 Scratchpad，或直接进入提交页。插件会自动识别 Hydro 语言设置中的 `monaco` 模式。
+打开普通题目、比赛题目或作业题目的 Scratchpad。插件会自动识别 Hydro 语言设置中的 `monaco` 模式；“递交以评测”等普通 textarea 页面不会被替换或追加编辑器。
 
 输入符号前缀即可显示候选，例如 C++ 中输入 `qu` 得到 `queue`，Python 中输入 `pri` 得到 `print`，Java 中输入 `Pri` 得到 `PriorityQueue`。候选出现后可按 <kbd>Tab</kbd>/<kbd>Enter</kbd> 或点击完成输入；只有一个匹配项时，即使候选框还没来得及出现，按 <kbd>Tab</kbd> 也会直接展开（如 `qu` → `queue`）。
 
-编辑器右下角显示 `Batter 1.0.3 · 补全已就绪` 时，表示插件已经挂载到当前 Monaco 编辑器。插件会读取站点的 `LANGS` 配置，并兼容 `cpp`、`c_cpp`、`text/x-c++src`、`python3` 等常见 Monaco/主题语言别名。
+编辑器右下角显示 `Batter 1.0.4 · 补全已就绪` 时，表示插件已经挂载到当前 Monaco 编辑器。插件会读取站点的 `LANGS` 配置，并兼容 `cpp`、`c_cpp`、`text/x-c++src`、`python3` 等常见 Monaco/主题语言别名。
 
 | 操作 | 快捷键 |
 | --- | --- |
@@ -40,7 +40,7 @@ hydrooj addon add "$(pwd)"
 
 恢复和清除草稿也可以从 Monaco 右键菜单或命令面板执行。
 
-如果升级后仍显示旧版本，请重启 Hydro 服务并对题目页执行一次强制刷新。浏览器控制台中输入 `UiContext.hydroBatterCodeEdit` 可确认后端插件版本，输入 `window.HydroBatterCodeEdit` 可以查看前端版本、已注册语言、编辑器数量、补全调用次数和最近一次补全结果；两个对象中的版本都应为 `1.0.3`。
+如果升级后仍显示旧版本，请重启 Hydro 服务并对题目页执行一次强制刷新。浏览器控制台中输入 `UiContext.hydroBatterCodeEdit` 可确认后端插件版本，输入 `window.HydroBatterCodeEdit` 可以查看前端版本、已注册语言、编辑器数量、补全调用次数和最近一次补全结果；两个对象中的版本都应为 `1.0.4`。
 
 ## 配置
 
@@ -49,7 +49,6 @@ hydrooj addon add "$(pwd)"
 - 各项能力的总开关；
 - 自动保存和诊断的防抖时间；
 - 本地草稿保留天数；
-- 提交页 Monaco 高度。
 
 配置通过 `UiContext` 以只读形式传到浏览器，不提供修改系统状态的前端接口。草稿只保存在当前浏览器的 `localStorage`，不会上传到服务端。
 

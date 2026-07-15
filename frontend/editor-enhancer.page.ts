@@ -1,5 +1,5 @@
 import {
-  $, addPage, AutoloadPage, i18n, loadMonaco, Notification,
+  addPage, AutoloadPage, i18n, loadMonaco, Notification,
 } from '@hydrooj/ui-default';
 import type * as Monaco from 'monaco-editor';
 import {
@@ -8,17 +8,12 @@ import {
 } from '../src/catalog';
 import { diagnoseCode } from '../src/diagnostics';
 import {
-  buildDraftKey, cleanupExpiredDrafts, clearDraft, DraftContext, readDraft, writeDraft,
+  cleanupExpiredDrafts, clearDraft, DraftContext, readDraft, writeDraft,
 } from '../src/drafts';
 import { formatCode, supportsFallbackFormatting } from '../src/formatter';
 import { BatterEditorConfig, DEFAULT_EDITOR_CONFIG } from '../types';
 
-const SUBMIT_PAGE_NAMES = new Set([
-  'problem_submit',
-  'contest_detail_problem_submit',
-  'homework_detail_problem_submit',
-]);
-const PLUGIN_VERSION = '1.0.3';
+const PLUGIN_VERSION = '1.0.4';
 const MARKER_OWNER = 'hydro-batter-code-edit';
 const supportedLanguages = new Set(getSupportedLanguages());
 const sessions = new Set<EditorSession>();
@@ -68,7 +63,6 @@ function installStyles() {
   const style = document.createElement('style');
   style.id = 'hydro-batter-code-edit-styles';
   style.textContent = `
-    .hydro-batter-editor { width: 100%; border: 1px solid #d5d5d5; border-radius: 3px; overflow: hidden; }
     .hydro-batter-status {
       pointer-events: none; margin: 0 14px 8px 0; padding: 3px 8px; border-radius: 4px;
       color: var(--text-2, #666); background: #fff;
@@ -612,7 +606,7 @@ class EditorSession {
     this.runDiagnostics();
     this.updateStatus();
     // Monaco's creation event fires before Scratchpad registers its Redux change listener.
-    // Restore on the next task so both Scratchpad and the submission textarea receive the edit.
+    // Restore on the next task so Scratchpad receives the edit.
     this.restoreTimer = setTimeout(() => {
       if (!this.disposed && this.editor.getModel() === model) this.restoreDraft(false);
     });
@@ -736,69 +730,6 @@ function attachEditor(editor: Monaco.editor.IStandaloneCodeEditor, monaco: typeo
   runtimeStatus.editorCount = sessions.size;
 }
 
-function getSelectedLanguage(): string {
-  const languageKey = String(($('[name="lang"]') as any).val?.() || '');
-  const langConfig = (window as any).LANGS?.[languageKey];
-  const highlight = typeof langConfig?.highlight === 'string'
-    ? langConfig.highlight.split(/\s+/)[0]
-    : '';
-  return String(langConfig?.monaco || highlight || normalizeLanguage(languageKey) || 'plaintext');
-}
-
-async function createSubmissionEditor(monaco: typeof Monaco, registerAction: Function, customOptions: object) {
-  const textarea = document.querySelector<HTMLTextAreaElement>('textarea[name="code"]');
-  if (!textarea || textarea.dataset.hydroBatterEditor) return;
-  textarea.dataset.hydroBatterEditor = 'true';
-  const language = getSelectedLanguage();
-  const container = document.createElement('div');
-  container.className = 'hydro-batter-editor textbox';
-  container.style.height = `${config.editorHeight}px`;
-  textarea.hidden = true;
-  textarea.insertAdjacentElement('afterend', container);
-
-  const uri = monaco.Uri.parse(`hydro-batter://submission/${encodeURIComponent(buildDraftKey(getDraftContext(language)))}`);
-  const model = monaco.editor.createModel(textarea.value || '', language, uri);
-  const editor = monaco.editor.create(container, {
-    ...customOptions,
-    model,
-    automaticLayout: true,
-    lineNumbers: 'on',
-    glyphMargin: true,
-    minimap: { enabled: false },
-    lightbulb: { enabled: monaco.editor.ShowLightbulbIconMode.On },
-    fontFamily: (window as any).UserContext?.codeFontFamily,
-    fontLigatures: '',
-    scrollBeyondLastLine: false,
-  });
-  registerAction(editor, model, textarea);
-  textarea.value = model.getValue();
-  const syncTextarea = () => {
-    textarea.value = model.getValue(monaco.editor.EndOfLinePreference.LF, false);
-    textarea.textContent = textarea.value;
-  };
-  const modelDisposable = model.onDidChangeContent(syncTextarea);
-  const form = textarea.closest('form');
-  form?.addEventListener('submit', syncTextarea);
-
-  const updateLanguage = () => {
-    const nextLanguage = getSelectedLanguage();
-    if (nextLanguage && model.getLanguageId() !== nextLanguage) monaco.editor.setModelLanguage(model, nextLanguage);
-  };
-  const selector = document.getElementById('codelang-selector');
-  selector?.addEventListener('change', () => setTimeout(updateLanguage));
-  selector?.addEventListener('click', () => setTimeout(updateLanguage));
-
-  editor.onDidDispose(() => {
-    modelDisposable.dispose();
-    if (!model.isDisposed()) model.dispose();
-    container.remove();
-    textarea.hidden = false;
-  });
-  (window as any).editor = editor;
-  (window as any).model = model;
-  editor.focus();
-}
-
 addPage(new AutoloadPage('hydro-batter-code-edit', async (pageName) => {
   runtimeStatus.pageName = pageName;
   config = getConfig();
@@ -823,11 +754,6 @@ addPage(new AutoloadPage('hydro-batter-code-edit', async (pageName) => {
       editor as Monaco.editor.IStandaloneCodeEditor,
       monacoApi,
     ));
-
-    if (SUBMIT_PAGE_NAMES.has(pageName) || document.querySelector('textarea[name="code"]')) {
-      await new Promise((resolve) => setTimeout(resolve, 80));
-      await createSubmissionEditor(monacoApi, loaded.registerAction, loaded.customOptions || {});
-    }
 
     runtimeStatus.loaded = true;
     console.info(

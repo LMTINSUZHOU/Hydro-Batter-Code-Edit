@@ -30,6 +30,8 @@ describe('frontend completion integration', () => {
 
     it('autoloads on an arbitrary Hydro page and registers the real Monaco language id', async () => {
         const providers = new Map<string, any>();
+        const createEditor = vi.fn();
+        const codeTextarea = { hidden: false, dataset: {}, value: 'int main() {}' };
         harness.monaco = {
             languages: {
                 CompletionItemKind: {
@@ -42,6 +44,7 @@ describe('frontend completion integration', () => {
                 },
             },
             editor: {
+                create: createEditor,
                 getEditors: () => [],
                 onDidCreateEditor: () => ({ dispose: () => undefined }),
             },
@@ -50,7 +53,7 @@ describe('frontend completion integration', () => {
         const windowMock: any = {
             UiContext: {
                 hydroBatterCodeEdit: {
-                    version: '1.0.3',
+                    version: '1.0.4',
                     enabled: true,
                     completion: true,
                     templates: false,
@@ -71,7 +74,7 @@ describe('frontend completion integration', () => {
             createElement: () => ({ style: {}, dataset: {} }),
             head: { appendChild: () => undefined },
             documentElement: { dataset: {} },
-            querySelector: () => null,
+            querySelector: (selector: string) => selector === 'textarea[name="code"]' ? codeTextarea : null,
         };
         const storageMock = {
             length: 0,
@@ -93,12 +96,14 @@ describe('frontend completion integration', () => {
         expect(providers.has('python3')).toBe(true);
         expect(providers.has('java')).toBe(true);
         expect(windowMock.HydroBatterCodeEdit).toMatchObject({
-            version: '1.0.3',
-            serverVersion: '1.0.3',
+            version: '1.0.4',
+            serverVersion: '1.0.4',
             loaded: true,
             pageName: 'site_specific_problem_page',
             completionEnabled: true,
         });
+        expect(createEditor).not.toHaveBeenCalled();
+        expect(codeTextarea).toEqual({ hidden: false, dataset: {}, value: 'int main() {}' });
 
         const result = providers.get('c_cpp').provideCompletionItems({
             getLanguageId: () => 'c_cpp',
@@ -181,7 +186,7 @@ describe('frontend completion integration', () => {
         const windowMock: any = {
             UiContext: {
                 hydroBatterCodeEdit: {
-                    version: '1.0.3',
+                    version: '1.0.4',
                     enabled: true,
                     completion: true,
                     templates: true,

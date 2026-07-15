@@ -8,7 +8,6 @@ export interface BatterEditorConfig {
     autosaveDelay: number;
     diagnosticsDelay: number;
     draftRetentionDays: number;
-    editorHeight: number;
 }
 
 export const DEFAULT_EDITOR_CONFIG: BatterEditorConfig = {
@@ -21,5 +20,4 @@ export const DEFAULT_EDITOR_CONFIG: BatterEditorConfig = {
     autosaveDelay: 1000,
     diagnosticsDelay: 350,
     draftRetentionDays: 7,
-    editorHeight: 520,
 };

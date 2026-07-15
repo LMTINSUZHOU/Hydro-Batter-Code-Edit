@@ -14,7 +14,6 @@ declare module 'hydrooj' {
         'hydro-batter-code-edit.autosaveDelay': number;
         'hydro-batter-code-edit.diagnosticsDelay': number;
         'hydro-batter-code-edit.draftRetentionDays': number;
-        'hydro-batter-code-edit.editorHeight': number;
     }
 
     interface UiContextBase {
@@ -23,7 +22,7 @@ declare module 'hydrooj' {
 }
 
 export const name = 'hydro-batter-code-edit';
-export const version = '1.0.3';
+export const version = '1.0.4';
 
 const settingSchema = Schema.object({
     'hydro-batter-code-edit': Schema.object({
@@ -48,9 +47,6 @@ const settingSchema = Schema.object({
         draftRetentionDays: Schema.number().min(1).max(365).step(1)
             .default(DEFAULT_EDITOR_CONFIG.draftRetentionDays)
             .description('Local draft retention in days'),
-        editorHeight: Schema.number().min(240).max(1200).step(20)
-            .default(DEFAULT_EDITOR_CONFIG.editorHeight)
-            .description('Submission editor height in pixels'),
     }).extra('family', 'setting_hydro_batter_code_edit'),
 });
 
@@ -76,7 +72,6 @@ function getPublicConfig(): BatterEditorConfig & { version: string } {
         autosaveDelay: getNumber('hydro-batter-code-edit.autosaveDelay', DEFAULT_EDITOR_CONFIG.autosaveDelay),
         diagnosticsDelay: getNumber('hydro-batter-code-edit.diagnosticsDelay', DEFAULT_EDITOR_CONFIG.diagnosticsDelay),
         draftRetentionDays: getNumber('hydro-batter-code-edit.draftRetentionDays', DEFAULT_EDITOR_CONFIG.draftRetentionDays),
-        editorHeight: getNumber('hydro-batter-code-edit.editorHeight', DEFAULT_EDITOR_CONFIG.editorHeight),
     };
 }
 
