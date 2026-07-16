@@ -6,6 +6,9 @@ import {
   CompletionSymbolKind, getCompletionSnippets, getCompletionSymbols, getSupportedLanguages,
   getTemplates, getUniqueCompletionSymbol, normalizeLanguage,
 } from '../src/catalog';
+import {
+  analyzeCompletionDocument, CompletionAnalysis, getIdeCompletionResult, IdeCompletionKind,
+} from '../src/completion-engine';
 import { diagnoseCode } from '../src/diagnostics';
 import {
   cleanupExpiredDrafts, clearDraft, DraftContext, readDraft, writeDraft,
@@ -13,7 +16,7 @@ import {
 import { formatCode, supportsFallbackFormatting } from '../src/formatter';
 import { BatterEditorConfig, DEFAULT_EDITOR_CONFIG } from '../types';
 
-const PLUGIN_VERSION = '1.0.4';
+const PLUGIN_VERSION = '1.1.0';
 const MARKER_OWNER = 'hydro-batter-code-edit';
 const supportedLanguages = new Set(getSupportedLanguages());
 const sessions = new Set<EditorSession>();
@@ -21,6 +24,11 @@ const attachedEditors = new WeakMap<Monaco.editor.IStandaloneCodeEditor, EditorS
 const completionProviderLanguages = new Set<string>();
 const formattingProviderLanguages = new Set<string>();
 const languageBindings = new Map<string, string>();
+const completionAnalysisCache = new WeakMap<Monaco.editor.ITextModel, {
+  language: string;
+  version: number;
+  analysis: CompletionAnalysis;
+}>();
 
 let monacoApi: typeof Monaco;
 let config: BatterEditorConfig;
@@ -35,7 +43,12 @@ interface RuntimeStatus {
   registeredLanguages: string[];
   editorCount: number;
   completionRequests: number;
-  lastCompletion?: { language: string; prefix: string; count: number };
+  lastCompletion?: {
+    language: string;
+    prefix: string;
+    count: number;
+    context: 'global' | 'include' | 'import' | 'member';
+  };
   error?: string;
 }
 
@@ -126,6 +139,29 @@ function catalogLanguageFor(monacoLanguage: string): string {
     || resolveCatalogLanguage(monacoLanguage);
 }
 
+function getCompletionAnalysis(model: Monaco.editor.ITextModel, language: string): CompletionAnalysis {
+  const version = model.getVersionId();
+  const cached = completionAnalysisCache.get(model);
+  if (cached?.version === version && cached.language === language) return cached.analysis;
+  const analysis = analyzeCompletionDocument(model.getValue(), language);
+  completionAnalysisCache.set(model, { language, version, analysis });
+  return analysis;
+}
+
+function completionRange(
+  model: Monaco.editor.ITextModel,
+  replacement: { start: number; end: number },
+): Monaco.IRange {
+  const start = model.getPositionAt(replacement.start);
+  const end = model.getPositionAt(replacement.end);
+  return {
+    startLineNumber: start.lineNumber,
+    startColumn: start.column,
+    endLineNumber: end.lineNumber,
+    endColumn: end.column,
+  };
+}
+
 function ensureCompletionProvider(
   monaco: typeof Monaco,
   monacoLanguage: string,
@@ -137,6 +173,13 @@ function ensureCompletionProvider(
     providerDisposables.push(monaco.languages.registerCompletionItemProvider(monacoLanguage, {
       provideCompletionItems(model, position) {
         const language = catalogLanguageFor(model.getLanguageId()) || catalogLanguage;
+        const code = model.getValue();
+        const offset = model.getOffsetAt(position);
+        const ideCompletion = getIdeCompletionResult(
+          getCompletionAnalysis(model, language),
+          code,
+          offset,
+        );
         const word = model.getWordUntilPosition(position);
         const range = {
           startLineNumber: position.lineNumber,
@@ -144,17 +187,20 @@ function ensureCompletionProvider(
           startColumn: word.startColumn,
           endColumn: word.endColumn,
         };
-        const prefix = model.getValueInRange(range);
+        const prefix = ideCompletion.prefix || model.getValueInRange(range);
         const query = prefix.toLowerCase();
-        const snippets = getCompletionSnippets(language).filter((snippet) => !query
+        const snippets = ideCompletion.exclusive ? [] : getCompletionSnippets(language).filter((snippet) => !query
           || snippet.prefix.toLowerCase().startsWith(query)
           || snippet.label.toLowerCase().startsWith(query));
-        const symbols = getCompletionSymbols(language, prefix);
+        const semanticLabels = new Set(ideCompletion.items.map((item) => item.label));
+        const symbols = ideCompletion.exclusive ? [] : getCompletionSymbols(language, prefix)
+          .filter((symbol) => !semanticLabels.has(symbol.label));
         runtimeStatus.completionRequests += 1;
         runtimeStatus.lastCompletion = {
           language: model.getLanguageId(),
           prefix,
-          count: snippets.length + symbols.length,
+          count: ideCompletion.items.length + snippets.length + symbols.length,
+          context: ideCompletion.context,
         };
         const symbolKinds: Record<CompletionSymbolKind, Monaco.languages.CompletionItemKind> = {
           keyword: monaco.languages.CompletionItemKind.Keyword,
@@ -164,8 +210,42 @@ function ensureCompletionProvider(
           module: monaco.languages.CompletionItemKind.Module,
           property: monaco.languages.CompletionItemKind.Property,
         };
+        const ideKinds: Record<IdeCompletionKind, Monaco.languages.CompletionItemKind> = {
+          class: monaco.languages.CompletionItemKind.Class,
+          constant: monaco.languages.CompletionItemKind.Constant,
+          constructor: monaco.languages.CompletionItemKind.Constructor,
+          enum: monaco.languages.CompletionItemKind.Enum,
+          field: monaco.languages.CompletionItemKind.Field,
+          function: monaco.languages.CompletionItemKind.Function,
+          interface: monaco.languages.CompletionItemKind.Interface,
+          method: monaco.languages.CompletionItemKind.Method,
+          module: monaco.languages.CompletionItemKind.Module,
+          property: monaco.languages.CompletionItemKind.Property,
+          variable: monaco.languages.CompletionItemKind.Variable,
+        };
+        const seen = new Set<string>();
+        const unique = <T extends { label: string; insertText: string }>(items: T[]) => items.filter((item) => {
+          const key = `${item.label}:${item.insertText}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
         return {
-          suggestions: [
+          suggestions: unique([
+            ...ideCompletion.items.map((item, index) => ({
+              label: item.label,
+              detail: item.detail,
+              documentation: item.documentation || item.detail,
+              filterText: item.filterText || item.label,
+              insertText: item.insertText,
+              insertTextRules: item.snippet
+                ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
+                : undefined,
+              kind: ideKinds[item.kind],
+              preselect: index === 0,
+              range: item.replacement ? completionRange(model, item.replacement) : range,
+              sortText: item.sortText,
+            })),
             ...snippets.map((snippet, index) => ({
               label: snippet.label,
               detail: snippet.detail,
@@ -175,7 +255,7 @@ function ensureCompletionProvider(
               insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
               kind: monaco.languages.CompletionItemKind.Snippet,
               range,
-              sortText: `00${index.toString().padStart(2, '0')}`,
+              sortText: `10${index.toString().padStart(2, '0')}`,
             })),
             ...symbols.map((symbol, index) => ({
               label: symbol.label,
@@ -186,11 +266,12 @@ function ensureCompletionProvider(
               kind: symbolKinds[symbol.kind],
               preselect: index === 0,
               range,
-              sortText: `10${symbol.label.toLowerCase()}`,
+              sortText: `20${symbol.label.toLowerCase()}`,
             })),
-          ],
+          ]),
         };
       },
+      triggerCharacters: ['.', ':', '>', '#', '<'],
     }));
   } catch (error) {
     completionProviderLanguages.delete(monacoLanguage);

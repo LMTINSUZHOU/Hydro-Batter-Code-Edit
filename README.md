@@ -2,7 +2,7 @@
 
 这是一个面向 HydroOJ 默认 UI 的 Monaco 代码编辑器增强插件。它不需要额外部署语言服务器，在浏览器内提供：
 
-- 竞赛编程补全：覆盖 C、C++、Python、Java、Kotlin、Go、Rust、C#、JavaScript 等常用语言，包括关键字、标准库符号和代码片段。
+- 语义化竞赛编程补全：重点增强 C++、Python、Java，识别当前文件的变量、函数、类与导入，根据容器/对象类型补全成员、方法签名和参数占位；其他常用语言继续提供关键字、标准库符号和代码片段。
 - 代码模板：从命令面板、右键菜单或快捷键插入各语言的完整提交模板。
 - 代码格式化：优先使用 Monaco 已注册的格式化能力，并为常用 OJ 语言提供保守的缩进/空白格式化。
 - 即时代码诊断：检查括号、全角符号、Git 冲突标记、可疑空语句、入口函数、Java `Main` 类和 Python 混合缩进。
@@ -27,9 +27,11 @@ hydrooj addon add "$(pwd)"
 
 打开普通题目、比赛题目或作业题目的 Scratchpad。插件会自动识别 Hydro 语言设置中的 `monaco` 模式；“递交以评测”等普通 textarea 页面不会被替换或追加编辑器。
 
-输入符号前缀即可显示候选，例如 C++ 中输入 `qu` 得到 `queue`，Python 中输入 `pri` 得到 `print`，Java 中输入 `Pri` 得到 `PriorityQueue`。候选出现后可按 <kbd>Tab</kbd>/<kbd>Enter</kbd> 或点击完成输入；只有一个匹配项时，即使候选框还没来得及出现，按 <kbd>Tab</kbd> 也会直接展开（如 `qu` → `queue`）。
+输入符号前缀即可显示候选，例如 C++ 中输入 `qu` 得到 `queue`，Python 中输入 `pri` 得到带参数的 `print(...)`，Java 中输入 `Pri` 得到 `PriorityQueue`。候选出现后可按 <kbd>Tab</kbd>/<kbd>Enter</kbd> 或点击完成输入；只有一个普通符号匹配项时，即使候选框还没来得及出现，按 <kbd>Tab</kbd> 也会直接展开（如 `qu` → `queue`）。
 
-编辑器右下角显示 `Batter 1.0.4 · 补全已就绪` 时，表示插件已经挂载到当前 Monaco 编辑器。插件会读取站点的 `LANGS` 配置，并兼容 `cpp`、`c_cpp`、`text/x-c++src`、`python3` 等常见 Monaco/主题语言别名。
+在 C++ 的 `vector<int> values` 后输入 `values.pu`，会优先建议 `push_back(value)`；Python 的 `items.ap` 会得到 `append(value)`；Java 的 `Map` 变量输入 `.getO` 会得到 `getOrDefault(key, defaultValue)`。插件也会补全 `#include <...>`、Python/Java 的 `import`、`std::`/`Arrays.`/`Math.` 等静态成员，以及当前文件中声明的函数与方法。函数候选使用 Monaco snippet，接受后可继续按 <kbd>Tab</kbd> 在参数占位之间移动。
+
+编辑器右下角显示 `Batter 1.1.0 · 补全已就绪` 时，表示插件已经挂载到当前 Monaco 编辑器。插件会读取站点的 `LANGS` 配置，并兼容 `cpp`、`c_cpp`、`text/x-c++src`、`python3` 等常见 Monaco/主题语言别名。
 
 | 操作 | 快捷键 |
 | --- | --- |
@@ -40,7 +42,7 @@ hydrooj addon add "$(pwd)"
 
 恢复和清除草稿也可以从 Monaco 右键菜单或命令面板执行。
 
-如果升级后仍显示旧版本，请重启 Hydro 服务并对题目页执行一次强制刷新。浏览器控制台中输入 `UiContext.hydroBatterCodeEdit` 可确认后端插件版本，输入 `window.HydroBatterCodeEdit` 可以查看前端版本、已注册语言、编辑器数量、补全调用次数和最近一次补全结果；两个对象中的版本都应为 `1.0.4`。
+如果升级后仍显示旧版本，请重启 Hydro 服务并对题目页执行一次强制刷新。浏览器控制台中输入 `UiContext.hydroBatterCodeEdit` 可确认后端插件版本，输入 `window.HydroBatterCodeEdit` 可以查看前端版本、已注册语言、编辑器数量、补全调用次数以及最近一次补全的上下文；两个对象中的版本都应为 `1.1.0`。
 
 ## 配置
 
@@ -55,6 +57,8 @@ hydrooj addon add "$(pwd)"
 ## 诊断边界
 
 插件诊断是即时、轻量的静态检查，不等同于编译器或语言服务器。它能提前发现常见输入错误，但最终语法、类型与运行结果仍以 Hydro 评测机为准。插件使用独立的 Monaco marker owner，不会覆盖 JavaScript/TypeScript 等语言已有的诊断。
+
+补全引擎同样完全运行在浏览器中，不依赖 clangd、Pyright 或 JDT Language Server。它针对 OJ 常见的单文件代码、标准容器和标准库做轻量类型推断，响应快且无需后端服务；跨文件符号、复杂泛型推导、重载解析和编译器级准确性仍需要以后接入可选的语言服务器才能实现。
 
 ## 开发与验证
 

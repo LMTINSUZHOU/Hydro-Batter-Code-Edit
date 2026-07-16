@@ -219,6 +219,12 @@ const COMMON_CPP: CompletionSnippet[] = [
         body: 'ios::sync_with_stdio(false);\ncin.tie(nullptr);',
     },
     {
+        prefix: 'rangefor',
+        label: 'range-based for loop',
+        detail: 'Iterate over every element in a C++ range',
+        body: 'for (auto& ${1:value} : ${2:values}) {\n    $0\n}',
+    },
+    {
         prefix: 'bsearch',
         label: 'bsearch',
         detail: 'Binary search for the first valid value',
@@ -277,6 +283,10 @@ const LANGUAGE_SNIPPETS: Record<string, CompletionSnippet[]> = {
             body: 'for ${1:i} in range(${2:n}):\n    $0',
         },
         {
+            prefix: 'def', label: 'function definition', detail: 'Define a typed Python function',
+            body: 'def ${1:name}(${2:args}) -> ${3:None}:\n    $0',
+        },
+        {
             prefix: 'bsearch', label: 'bsearch', detail: 'Binary search for the first valid value',
             body: `left, right = \${1:0}, \${2:n}
 while left < right:
@@ -296,6 +306,14 @@ $0`,
         {
             prefix: 'st', label: 'StringTokenizer', detail: 'Tokenize one input line',
             body: 'StringTokenizer st = new StringTokenizer(br.readLine());',
+        },
+        {
+            prefix: 'sout', label: 'System.out.println', detail: 'Print a line to standard output',
+            body: 'System.out.println(${1:value});',
+        },
+        {
+            prefix: 'psvm', label: 'public static void main', detail: 'Java program entry point',
+            body: 'public static void main(String[] args) throws Exception {\n    $0\n}',
         },
     ],
     kotlin: [
@@ -551,16 +569,32 @@ export function getCompletionSnippets(language: string): CompletionSnippet[] {
 export function getCompletionSymbols(language: string, prefix = ''): CompletionSymbol[] {
     const normalized = normalizeLanguage(language);
     const query = prefix.toLowerCase();
-    const unique = new Map<string, CompletionSymbol>();
+    const unique = new Map<string, { item: CompletionSymbol; score: number }>();
     for (const item of LANGUAGE_SYMBOLS[normalized] || []) {
-        if (query && !item.label.toLowerCase().startsWith(query)) continue;
-        if (!unique.has(item.label)) unique.set(item.label, item);
+        const label = item.label.toLowerCase();
+        let score = 50;
+        if (query) {
+            if (label === query) score = 0;
+            else if (label.startsWith(query)) score = 10;
+            else {
+                let queryIndex = 0;
+                let gaps = 0;
+                for (let index = 0; index < label.length && queryIndex < query.length; index += 1) {
+                    if (label[index] === query[queryIndex]) queryIndex += 1;
+                    else if (queryIndex) gaps += 1;
+                }
+                if (queryIndex !== query.length) continue;
+                score = 30 + gaps;
+            }
+        }
+        if (!unique.has(item.label)) unique.set(item.label, { item, score });
     }
-    return Array.from(unique.values()).sort((left, right) => {
-        const leftExact = left.label.toLowerCase() === query ? 0 : 1;
-        const rightExact = right.label.toLowerCase() === query ? 0 : 1;
-        return leftExact - rightExact || left.label.localeCompare(right.label);
-    });
+    const matches = Array.from(unique.values());
+    const hasPrefixMatch = matches.some(({ score }) => score <= 10);
+    return matches
+        .filter(({ score }) => !hasPrefixMatch || score <= 10)
+        .sort((left, right) => left.score - right.score || left.item.label.localeCompare(right.item.label))
+        .map(({ item }) => item);
 }
 
 export function getUniqueCompletionSymbol(language: string, prefix: string): CompletionSymbol | undefined {

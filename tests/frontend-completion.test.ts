@@ -36,6 +36,7 @@ describe('frontend completion integration', () => {
             languages: {
                 CompletionItemKind: {
                     Keyword: 1, Class: 2, Function: 3, Constant: 4, Module: 5, Property: 6, Snippet: 7,
+                    Constructor: 8, Enum: 9, Field: 10, Interface: 11, Method: 12, Variable: 13,
                 },
                 CompletionItemInsertTextRule: { InsertAsSnippet: 4 },
                 registerCompletionItemProvider: (language: string, provider: any) => {
@@ -53,7 +54,7 @@ describe('frontend completion integration', () => {
         const windowMock: any = {
             UiContext: {
                 hydroBatterCodeEdit: {
-                    version: '1.0.4',
+                    version: '1.1.0',
                     enabled: true,
                     completion: true,
                     templates: false,
@@ -96,8 +97,8 @@ describe('frontend completion integration', () => {
         expect(providers.has('python3')).toBe(true);
         expect(providers.has('java')).toBe(true);
         expect(windowMock.HydroBatterCodeEdit).toMatchObject({
-            version: '1.0.4',
-            serverVersion: '1.0.4',
+            version: '1.1.0',
+            serverVersion: '1.1.0',
             loaded: true,
             pageName: 'site_specific_problem_page',
             completionEnabled: true,
@@ -107,6 +108,10 @@ describe('frontend completion integration', () => {
 
         const result = providers.get('c_cpp').provideCompletionItems({
             getLanguageId: () => 'c_cpp',
+            getOffsetAt: () => 2,
+            getPositionAt: (offset: number) => ({ lineNumber: 1, column: offset + 1 }),
+            getValue: () => 'qu',
+            getVersionId: () => 1,
             getWordUntilPosition: () => ({ startColumn: 1, endColumn: 3 }),
             getValueInRange: () => 'qu',
         }, { lineNumber: 1, column: 3 });
@@ -115,6 +120,41 @@ describe('frontend completion integration', () => {
             language: 'c_cpp',
             prefix: 'qu',
             count: 1,
+            context: 'global',
+        });
+
+        const memberCode = 'vector<int> values;\nvalues.pu';
+        const positionAt = (offset: number) => {
+            const before = memberCode.slice(0, offset);
+            const lines = before.split('\n');
+            return { lineNumber: lines.length, column: lines.at(-1)!.length + 1 };
+        };
+        const memberResult = providers.get('c_cpp').provideCompletionItems({
+            getLanguageId: () => 'c_cpp',
+            getOffsetAt: () => memberCode.length,
+            getPositionAt: positionAt,
+            getValue: () => memberCode,
+            getVersionId: () => 2,
+            getWordUntilPosition: () => ({ startColumn: 8, endColumn: 10 }),
+            getValueInRange: () => 'pu',
+        }, { lineNumber: 2, column: 10 });
+        expect(providers.get('c_cpp').triggerCharacters).toEqual(['.', ':', '>', '#', '<']);
+        expect(memberResult.suggestions).toEqual([
+            expect.objectContaining({
+                label: 'push_back',
+                insertText: 'push_back(${1:value})',
+                insertTextRules: 4,
+                kind: 12,
+                range: {
+                    startLineNumber: 2,
+                    startColumn: 8,
+                    endLineNumber: 2,
+                    endColumn: 10,
+                },
+            }),
+        ]);
+        expect(windowMock.HydroBatterCodeEdit.lastCompletion).toMatchObject({
+            language: 'c_cpp', prefix: 'pu', count: 1, context: 'member',
         });
     });
 
@@ -173,6 +213,7 @@ describe('frontend completion integration', () => {
             languages: {
                 CompletionItemKind: {
                     Keyword: 1, Class: 2, Function: 3, Constant: 4, Module: 5, Property: 6, Snippet: 7,
+                    Constructor: 8, Enum: 9, Field: 10, Interface: 11, Method: 12, Variable: 13,
                 },
                 CompletionItemInsertTextRule: { InsertAsSnippet: 4 },
                 registerCompletionItemProvider: () => ({ dispose: () => undefined }),
@@ -186,7 +227,7 @@ describe('frontend completion integration', () => {
         const windowMock: any = {
             UiContext: {
                 hydroBatterCodeEdit: {
-                    version: '1.0.4',
+                    version: '1.1.0',
                     enabled: true,
                     completion: true,
                     templates: true,
@@ -196,6 +237,7 @@ describe('frontend completion integration', () => {
                 },
             },
             LANGS: { cc: { monaco: 'cpp', highlight: 'cpp' } },
+            location: { href: 'https://example.test/p/1', pathname: '/p/1', search: '' },
             addEventListener: () => undefined,
         };
         vi.stubGlobal('window', windowMock);
