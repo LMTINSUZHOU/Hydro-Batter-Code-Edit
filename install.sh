@@ -51,12 +51,9 @@ Options:
 
 Environment overrides:
   JDTLS_VERSION       Eclipse JDT LS fallback version (default: 1.60.0)
-  JDTLS_INSTALL_ROOT  Fallback installation root (default: project runtime)
-  JDTLS_CACHE_DIR     Persistent download cache (default: project runtime/cache)
   JDTLS_DOWNLOAD_BASE Alternate mirror containing the selected version directory
   JDTLS_DOWNLOAD_URL  Complete alternate URL for the JDT LS archive
   JDTLS_CONNECTIONS   aria2 parallel connections (default: 8)
-  HYDRO_BATTER_BIN    Executable link directory (default: project runtime/bin)
   CXX                 Trusted C++ compiler used for clangd and the self-check
 EOF
 }
@@ -269,12 +266,12 @@ install_jdtls() {
         log "Using JDT LS already available at $(command -v jdtls)"
         return
     fi
-    install_root="${JDTLS_INSTALL_ROOT:-$RUNTIME_DIR}"
-    bin_dir="${HYDRO_BATTER_BIN:-$RUNTIME_BIN}"
+    install_root="$RUNTIME_DIR"
+    bin_dir="$RUNTIME_BIN"
     target="$install_root/jdtls-$JDTLS_VERSION"
     official_base="https://download.eclipse.org/jdtls/milestones/$JDTLS_VERSION"
     download_base="${JDTLS_DOWNLOAD_BASE:-$official_base}"
-    cache_dir="${JDTLS_CACHE_DIR:-$RUNTIME_DIR/cache}"
+    cache_dir="$RUNTIME_DIR/cache"
 
     if [[ -x "$target/bin/jdtls" ]]; then
         log "JDT LS $JDTLS_VERSION is already installed in the project runtime"

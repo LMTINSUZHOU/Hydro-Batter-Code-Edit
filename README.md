@@ -53,6 +53,19 @@ hydrooj addon add "$(pwd)"
 
 脚本不会自行重启服务。安装完成后先用 `pm2 list` 确认现有 Hydro 进程名，再执行 `pm2 restart <现有进程名>`；不需要 `--update-env`。Hydro 会在启动时发现 `frontend/*.page.ts` 并将前端入口编译进默认 UI。
 
+## 卸载
+
+卸载器只删除安装器在插件目录中创建的内容。建议先预览，再执行实际删除：
+
+```bash
+./uninstall.sh --dry-run
+./uninstall.sh
+```
+
+默认删除 `.hydro-batter-runtime`（Nix out-link/GC root、命令链接、JDT LS 和缓存）以及 `node_modules`（Pyright、Tree-sitter）。如需保留 npm 依赖，可使用 `./uninstall.sh --keep-node-modules`。
+
+卸载器不会注销 Hydro addon、停止或重启 PM2、运行 Nix 垃圾回收、删除仓库，也不会清除用户浏览器 `localStorage` 中的草稿。应另行在 Hydro 中停用/注销插件，并重启现有 PM2 进程。删除项目内 GC root 后，相应 Nix store 路径只会变成“可回收”，不会立即影响其他 Nix 环境。
+
 ## 使用
 
 打开普通题目、比赛题目或作业题目的 Scratchpad。插件会自动识别 Hydro 语言设置中的 `monaco` 模式；“递交以评测”等普通 textarea 页面不会被替换或追加编辑器。
@@ -61,7 +74,7 @@ hydrooj addon add "$(pwd)"
 
 在 C++ 的 `vector<int> values` 后输入 `values.pu`，会优先建议 `push_back(value)`；Python 的 `items.ap` 会得到 `append(value)`；Java 的 `Map` 变量输入 `.getO` 会得到 `getOrDefault(key, defaultValue)`。用户自定义方法的返回类型也会继续传播，例如 `graph.neighbors(1).ap` 可以根据 `neighbors` 的返回注解继续补全。插件也会补全 `#include <...>`、Python/Java 的 `import`、`std::`/`Arrays.`/`Math.` 等静态成员，以及当前文件中声明的函数与方法。函数候选使用 Monaco snippet，接受后可继续按 <kbd>Tab</kbd> 在参数占位之间移动。
 
-编辑器右下角显示 `Batter 1.3.3 · 补全已就绪 · 语法分析已就绪 · 语言服务器已就绪` 时，表示插件、Tree-sitter 和当前语言的 LSP 都已经挂载到 Monaco。后面的 `8 diagnostics` 表示当前文件共有 8 条轻量/LSP 诊断，橙色只是提醒存在问题，不是插件加载失败。插件会读取站点的 `LANGS` 配置，并兼容 `cpp`、`c_cpp`、`text/x-c++src`、`python3` 等常见别名。LSP 启动期间或连接失败时仍会使用 Tree-sitter 与静态目录补全，不会阻塞编辑器。
+编辑器右下角显示 `Batter 1.3.4 · 补全已就绪 · 语法分析已就绪 · 语言服务器已就绪` 时，表示插件、Tree-sitter 和当前语言的 LSP 都已经挂载到 Monaco。后面的 `8 diagnostics` 表示当前文件共有 8 条轻量/LSP 诊断，橙色只是提醒存在问题，不是插件加载失败。插件会读取站点的 `LANGS` 配置，并兼容 `cpp`、`c_cpp`、`text/x-c++src`、`python3` 等常见别名。LSP 启动期间或连接失败时仍会使用 Tree-sitter 与静态目录补全，不会阻塞编辑器。
 
 | 操作 | 快捷键 |
 | --- | --- |
@@ -72,7 +85,7 @@ hydrooj addon add "$(pwd)"
 
 恢复和清除草稿也可以从 Monaco 右键菜单或命令面板执行。
 
-如果升级后仍显示旧版本，请重启 Hydro 服务并对题目页执行一次强制刷新。浏览器控制台中输入 `UiContext.hydroBatterCodeEdit` 可确认后端插件版本和可用的 `lspLanguages`，输入 `window.HydroBatterCodeEdit` 可以查看前端版本、Tree-sitter/LSP 状态、编辑器数量和补全调用次数；两个对象中的版本都应为 `1.3.3`。
+如果升级后仍显示旧版本，请重启 Hydro 服务并对题目页执行一次强制刷新。浏览器控制台中输入 `UiContext.hydroBatterCodeEdit` 可确认后端插件版本和可用的 `lspLanguages`，输入 `window.HydroBatterCodeEdit` 可以查看前端版本、Tree-sitter/LSP 状态、编辑器数量和补全调用次数；两个对象中的版本都应为 `1.3.4`。
 
 ## 配置
 
