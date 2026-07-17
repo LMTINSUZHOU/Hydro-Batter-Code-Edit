@@ -2,7 +2,7 @@ import {
     accessSync, constants, readdirSync,
 } from 'node:fs';
 import {
-    delimiter, extname, isAbsolute, join, resolve, sep,
+    delimiter, isAbsolute, join, resolve, sep,
 } from 'node:path';
 import { normalizeLanguage } from './catalog';
 
@@ -81,14 +81,9 @@ export function buildLspLaunch(
 }
 
 function executableCandidates(command: string): string[] {
-    if (isAbsolute(command) || command.includes('/') || command.includes('\\')) return [resolve(command)];
-    const extensions = process.platform === 'win32' && !extname(command)
-        ? (process.env.PATHEXT || '.EXE;.CMD;.BAT').split(';')
-        : [''];
+    if (isAbsolute(command) || command.includes('/')) return [resolve(command)];
     return [LOCAL_RUNTIME_BIN, ...(process.env.PATH || '').split(delimiter)]
-        .flatMap((directory) => extensions.map((extension) => (
-            join(directory, process.platform === 'win32' ? `${command}${extension}` : command)
-        )));
+        .map((directory) => join(directory, command));
 }
 
 export function resolveExecutable(command: string): string | undefined {
@@ -105,10 +100,6 @@ export function resolveExecutable(command: string): string | undefined {
 function versionedGnuCompilers(): string[] {
     const candidates: string[] = [];
     const directories = new Set((process.env.PATH || '').split(delimiter));
-    if (process.platform === 'darwin') {
-        directories.add('/opt/homebrew/bin');
-        directories.add('/usr/local/bin');
-    }
     for (const directory of directories) {
         if (!directory) continue;
         try {
@@ -127,9 +118,7 @@ export function resolveCppCompiler(command: string): string | undefined {
         : undefined;
     if (environmentCompiler) return environmentCompiler;
     const versioned = versionedGnuCompilers();
-    const commands = process.platform === 'darwin'
-        ? [...versioned, 'g++', 'c++', 'clang++']
-        : ['g++', ...versioned, 'c++', 'clang++'];
+    const commands = ['g++', ...versioned, 'c++', 'clang++'];
     for (const candidate of commands) {
         const executable = resolveExecutable(candidate);
         if (executable) return executable;

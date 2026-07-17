@@ -9,8 +9,6 @@ RUNTIME_BIN="$RUNTIME_DIR/bin"
 JDTLS_VERSION="${JDTLS_VERSION:-1.60.0}"
 CHECK_ONLY=0
 INSTALL_DEV=0
-INSTALL_SYSTEM=0
-USE_NIX=1
 SKIP_JDTLS=0
 TEMP_DIRS=("")
 
@@ -33,15 +31,21 @@ usage() {
     cat <<'EOF'
 Usage: ./install.sh [options]
 
-Install and verify Hydro Batter Code Edit runtime dependencies. By default the
-script does not use sudo or modify the host package/profile configuration. On a
-Nix host it creates only a project-local Nix out-link/GC root.
+Install and verify Hydro Batter Code Edit on Linux + PM2 + Nix. The script does
+not use sudo, modify the Nix profile, change PM2, or replace Hydro's Node.js.
+
+Project-local installation contents:
+  npm                  Pyright and browser Tree-sitter runtimes
+  nixpkgs#clang-tools  clangd for C/C++ LSP
+  nixpkgs#gcc          GNU g++ and <bits/stdc++.h>
+  nixpkgs#jdk21        Java 21 runtime for JDT LS
+  nixpkgs#jdt-language-server
+                       Eclipse JDT LS for Java LSP
+  fallback only        python3 + aria2 + verified Eclipse JDT LS archive
 
 Options:
   --check         Only verify the environment; do not install anything
   --dev           Install npm development dependencies too
-  --system        Explicitly install missing tools with apt/dnf/pacman/apk/brew
-  --no-nix        Do not build the isolated project-local Nix runtime
   --skip-jdtls    Do not install or verify Eclipse JDT LS
   -h, --help      Show this help
 
@@ -61,9 +65,6 @@ while (($#)); do
     case "$1" in
         --check) CHECK_ONLY=1 ;;
         --dev) INSTALL_DEV=1 ;;
-        --system) INSTALL_SYSTEM=1 ;;
-        --skip-system) INSTALL_SYSTEM=0 ;;
-        --no-nix) USE_NIX=0 ;;
         --skip-jdtls) SKIP_JDTLS=1 ;;
         -h|--help) usage; exit 0 ;;
         *) usage >&2; die "Unknown option: $1" ;;
@@ -71,67 +72,12 @@ while (($#)); do
     shift
 done
 
+[[ "$(uname -s)" == Linux ]] || die "Only Linux + PM2 + Nix deployments are supported."
+
 # PM2 frequently has a smaller PATH than the login shell. The backend also
 # searches this directory directly, but exporting it here keeps checks and the
 # fallback installer consistent.
 export PATH="$RUNTIME_BIN${PATH:+:$PATH}"
-
-as_root() {
-    if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
-        "$@"
-    elif have sudo; then
-        sudo "$@"
-    else
-        die "Root privileges are required only for --system. Remove --system or install the packages manually."
-    fi
-}
-
-install_system_dependencies() {
-    if [[ "$OSTYPE" == darwin* ]]; then
-        local llvm_prefix java_prefix
-        have brew || die "Homebrew is required for --system on macOS: https://brew.sh"
-        log "Installing language-server tools with Homebrew (--system was explicitly requested)"
-        brew install llvm gcc openjdk@21 python@3.12 aria2 jdtls
-        llvm_prefix="$(brew --prefix llvm)"
-        java_prefix="$(brew --prefix openjdk@21)"
-        export PATH="$llvm_prefix/bin:$java_prefix/bin:$PATH"
-        return
-    fi
-
-    if have apt-get; then
-        log "Installing language-server tools with apt (--system was explicitly requested)"
-        as_root apt-get update
-        as_root apt-get install -y ca-certificates curl gzip tar python3 g++ clangd aria2
-        if apt-cache show jdtls >/dev/null 2>&1; then as_root apt-get install -y jdtls; fi
-        if apt-cache show openjdk-21-jre-headless >/dev/null 2>&1; then
-            as_root apt-get install -y openjdk-21-jre-headless
-        elif apt-cache show openjdk-21-jdk-headless >/dev/null 2>&1; then
-            as_root apt-get install -y openjdk-21-jdk-headless
-        else
-            warn "This apt repository has no Java 21 package; the isolated Nix runtime is recommended."
-        fi
-        return
-    fi
-    if have dnf; then
-        log "Installing language-server tools with dnf (--system was explicitly requested)"
-        as_root dnf install -y ca-certificates curl gzip tar python3 gcc-c++ clang-tools-extra java-21-openjdk-headless aria2
-        if dnf --quiet list --available jdtls >/dev/null 2>&1; then as_root dnf install -y jdtls; fi
-        return
-    fi
-    if have pacman; then
-        log "Installing language-server tools with pacman (--system was explicitly requested)"
-        as_root pacman -Sy --needed --noconfirm ca-certificates curl gzip tar python gcc clang jre21-openjdk aria2
-        if pacman -Si jdtls >/dev/null 2>&1; then as_root pacman -S --needed --noconfirm jdtls; fi
-        return
-    fi
-    if have apk; then
-        log "Installing language-server tools with apk (--system was explicitly requested)"
-        as_root apk add ca-certificates curl gzip tar python3 g++ clang-extra-tools openjdk21-jre aria2
-        if apk search -e jdtls 2>/dev/null | grep -q '^jdtls'; then as_root apk add jdtls; fi
-        return
-    fi
-    die "Unsupported package manager. Use the default isolated Nix path or install the tools manually."
-}
 
 java_major() {
     java -version 2>&1 | awk -F '"' '/version/ {
@@ -152,11 +98,6 @@ find_cpp_compiler() {
     if [[ -n "${CXX:-}" && "$CXX" != *[[:space:]]* ]]; then
         if [[ -x "$CXX" ]]; then printf '%s\n' "$CXX"; return; fi
         if command -v "$CXX" >/dev/null 2>&1; then command -v "$CXX"; return; fi
-    fi
-    if [[ "$OSTYPE" == darwin* ]] && have brew; then
-        local candidate
-        candidate="$(find "$(brew --prefix)/bin" -maxdepth 1 -type l -name 'g++-*' 2>/dev/null | sort -r | head -n 1 || true)"
-        if [[ -n "$candidate" ]]; then printf '%s\n' "$candidate"; return; fi
     fi
     command -v g++ 2>/dev/null || command -v c++ 2>/dev/null || command -v clang++ 2>/dev/null || true
 }
@@ -181,7 +122,8 @@ register_detected_runtime_commands() {
 
 nix_build_component() {
     local name="$1" include_clangd="$2" include_gcc="$3" include_java="$4"
-    local include_jdtls="$5" include_aria2="$6" out_link="$RUNTIME_DIR/nix/$1" flake_attribute
+    local include_jdtls="$5" include_aria2="$6" include_python="$7"
+    local out_link="$RUNTIME_DIR/nix/$1" flake_attribute
     mkdir -p "$RUNTIME_DIR/nix"
     if have nix-build && nix-build "$ROOT_DIR/runtime.nix" \
         --arg includeClangd "$include_clangd" \
@@ -189,6 +131,7 @@ nix_build_component() {
         --arg includeJava "$include_java" \
         --arg includeJdtls "$include_jdtls" \
         --arg includeAria2 "$include_aria2" \
+        --arg includePython "$include_python" \
         --out-link "$out_link"; then
         export PATH="$out_link/bin:$PATH"
         return 0
@@ -199,6 +142,7 @@ nix_build_component() {
         java) flake_attribute=jdk21 ;;
         jdtls) flake_attribute=jdt-language-server ;;
         aria2) flake_attribute=aria2 ;;
+        python) flake_attribute=python3 ;;
         *) return 1 ;;
     esac
     have nix || return 1
@@ -224,22 +168,25 @@ install_nix_runtime() {
     fi
 
     log "Building missing tools into an isolated Nix runtime (no profile or system changes)"
-    if [[ "$include_clangd" == true ]] && ! nix_build_component clangd true false false false false; then
+    if [[ "$include_clangd" == true ]] && ! nix_build_component clangd true false false false false false; then
         warn "clang-tools could not be built from the configured nixpkgs"
         failures=$((failures + 1))
     fi
-    if [[ "$include_gcc" == true ]] && ! nix_build_component gcc false true false false false; then
+    if [[ "$include_gcc" == true ]] && ! nix_build_component gcc false true false false false false; then
         warn "GCC could not be built from the configured nixpkgs"
         failures=$((failures + 1))
     fi
-    if [[ "$include_java" == true ]] && ! nix_build_component java false false true false false; then
+    if [[ "$include_java" == true ]] && ! nix_build_component java false false true false false false; then
         warn "Java 21 could not be built from the configured nixpkgs"
         failures=$((failures + 1))
     fi
-    if [[ "$include_jdtls" == true ]] && ! nix_build_component jdtls false false false true false; then
-        warn "This nixpkgs channel has no usable jdt-language-server; preparing aria2 for the Eclipse fallback"
-        if ! nix_build_component aria2 false false false false true; then
+    if [[ "$include_jdtls" == true ]] && ! nix_build_component jdtls false false false true false false; then
+        warn "This nixpkgs channel has no usable jdt-language-server; preparing Python and aria2 for the Eclipse fallback"
+        if ! nix_build_component aria2 false false false false true false; then
             warn "aria2 could not be built; the fallback will use resumable curl"
+        fi
+        if ! have python3 && ! nix_build_component python false false false false false true; then
+            warn "Python 3 could not be built; the Eclipse JDT LS fallback cannot start without it"
         fi
     fi
     register_detected_runtime_commands
@@ -262,9 +209,8 @@ install_npm_dependencies() {
 }
 
 sha256_file() {
-    if have sha256sum; then sha256sum "$1" | awk '{print $1}';
-    elif have shasum; then shasum -a 256 "$1" | awk '{print $1}';
-    else die "sha256sum or shasum is required to verify JDT LS."; fi
+    have sha256sum || die "sha256sum is required to verify JDT LS."
+    sha256sum "$1" | awk '{print $1}'
 }
 
 download_with_resume() {
@@ -373,6 +319,9 @@ install_jdtls() {
 
 check_environment() {
     local failures=0 compiler temp_dir java_version
+    if have nix-build; then log "nix-build: $(command -v nix-build)";
+    elif have nix; then log "nix: $(command -v nix)";
+    else warn "Nix is missing"; failures=$((failures + 1)); fi
     for command in node npm clangd; do
         if have "$command"; then log "$command: $(command -v "$command")";
         else warn "$command is missing"; failures=$((failures + 1)); fi
@@ -444,12 +393,10 @@ JS
 }
 
 if ((CHECK_ONLY == 0)); then
-    if ((INSTALL_SYSTEM)); then install_system_dependencies; fi
+    have nix-build || have nix || die "Nix is required; nix-build and nix were not found."
     mkdir -p "$RUNTIME_BIN"
     register_detected_runtime_commands
-    if ((USE_NIX)) && { have nix-build || have nix; }; then
-        install_nix_runtime || true
-    fi
+    install_nix_runtime || true
     register_detected_runtime_commands
     install_npm_dependencies
     if ((SKIP_JDTLS == 0)); then install_jdtls; fi

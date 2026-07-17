@@ -59,7 +59,7 @@ describe('frontend completion integration', () => {
         const windowMock: any = {
             UiContext: {
                 hydroBatterCodeEdit: {
-                    version: '1.3.2',
+                    version: '1.3.3',
                     enabled: true,
                     completion: true,
                     templates: false,
@@ -103,8 +103,8 @@ describe('frontend completion integration', () => {
         expect(providers.has('java')).toBe(true);
         expect(signatureProviders.has('c_cpp')).toBe(true);
         expect(windowMock.HydroBatterCodeEdit).toMatchObject({
-            version: '1.3.2',
-            serverVersion: '1.3.2',
+            version: '1.3.3',
+            serverVersion: '1.3.3',
             loaded: true,
             pageName: 'site_specific_problem_page',
             completionEnabled: true,
@@ -269,7 +269,7 @@ describe('frontend completion integration', () => {
         const windowMock: any = {
             UiContext: {
                 hydroBatterCodeEdit: {
-                    version: '1.3.2',
+                    version: '1.3.3',
                     enabled: true,
                     completion: true,
                     templates: true,

@@ -5,6 +5,7 @@
   includeJava ? false,
   includeJdtls ? false,
   includeAria2 ? false,
+  includePython ? false,
 }:
 
 pkgs.buildEnv {
@@ -14,6 +15,7 @@ pkgs.buildEnv {
     ++ pkgs.lib.optionals includeGcc [ pkgs.gcc ]
     ++ pkgs.lib.optionals includeJava [ pkgs.jdk21 ]
     ++ pkgs.lib.optionals includeJdtls [ pkgs.jdt-language-server ]
-    ++ pkgs.lib.optionals includeAria2 [ pkgs.aria2 ];
+    ++ pkgs.lib.optionals includeAria2 [ pkgs.aria2 ]
+    ++ pkgs.lib.optionals includePython [ pkgs.python3 ];
   ignoreCollisions = true;
 }

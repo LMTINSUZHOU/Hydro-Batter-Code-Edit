@@ -36,7 +36,7 @@ declare module 'hydrooj' {
 }
 
 export const name = 'hydro-batter-code-edit';
-export const version = '1.3.2';
+export const version = '1.3.3';
 
 const TREE_SITTER_ASSETS: Record<string, string> = {
     'web-tree-sitter.wasm': require.resolve('web-tree-sitter/web-tree-sitter.wasm'),

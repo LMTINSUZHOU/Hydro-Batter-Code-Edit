@@ -15,15 +15,26 @@
 
 运行环境需要 Node.js 22+、HydroOJ 5.0+ 和 `@hydrooj/ui-default` 4.58+。
 
-正式部署按 **Linux + PM2 + Nix** 设计。请使用运行 Hydro/PM2 的同一个 Unix 用户，在插件目录中执行安装脚本：
+本插件仅支持 **Linux + PM2 + Nix** 部署。请使用运行 Hydro/PM2 的同一个 Unix 用户，在插件目录中执行安装脚本：
 
 ```bash
 ./install.sh
 ```
 
-默认安装不会调用 `sudo`，不会执行 `apt`/`dnf`，不会运行 `nix profile install`，也不会修改 PM2 配置。脚本只安装项目内 npm 依赖，并在 `.hydro-batter-runtime/nix` 下为缺失组件分别创建 Nix out-link/GC root 和少量命令链接；缺少的 clangd、GNU C++、Java 21、JDT LS 会先从当前 `<nixpkgs>` 构建或从 Nix 二进制缓存获取，旧环境没有 channel 时再使用 `nixpkgs` flake，但仍不写入任何 profile。插件后端会优先解析这个目录中的绝对命令，因此不依赖交互式 shell 与 PM2 的 `PATH` 是否一致。
+安装器要求服务器已有 Hydro 使用的 Node.js 22+、npm 和 Nix。它不会调用 `sudo`，不会执行任何系统包管理器，不会运行 `nix profile install`，也不会修改 PM2 配置。
 
-只检查环境而不修改任何文件可运行 `./install.sh --check`；插件开发环境使用 `./install.sh --dev`。脚本复用 Hydro 已有的 Node.js 22+，不会替换 Node.js。只有管理员明确传入 `./install.sh --system` 时才会调用发行版包管理器；PM2 + Nix 部署不需要这个选项。
+| 安装位置 | 内容 | 用途 |
+| --- | --- | --- |
+| `node_modules` | Pyright、Tree-sitter WASM/语法包 | Python LSP 和浏览器语法分析 |
+| `.hydro-batter-runtime/nix/clangd` | `nixpkgs#clang-tools` | C/C++ LSP |
+| `.hydro-batter-runtime/nix/gcc` | `nixpkgs#gcc` | GNU C++ 标准库与 `bits/stdc++.h` |
+| `.hydro-batter-runtime/nix/java` | `nixpkgs#jdk21` | JDT LS 的 Java 21 运行时 |
+| `.hydro-batter-runtime/nix/jdtls` | `nixpkgs#jdt-language-server` | Java LSP |
+| 仅回退时 | `python3`、`aria2` 和校验后的 Eclipse JDT LS 包 | 当前 nixpkgs 没有 JDT LS 时使用 |
+
+Nix 组件只在缺失时构建，并为每项创建项目内 out-link/GC root；旧环境没有 channel 时使用 `nixpkgs` flake，但仍不写入任何 profile。插件后端优先解析 `.hydro-batter-runtime/bin` 中的绝对命令，因此不依赖交互式 shell 与 PM2 的 `PATH` 是否一致。
+
+只检查环境而不修改任何文件可运行 `./install.sh --check`；插件开发环境使用 `./install.sh --dev`。安装器不会安装或替换 Hydro、PM2、Node.js、MongoDB，也不会改动现有 Nix profile。
 
 JDT LS 优先使用 Nix 的 `jdt-language-server`，从而避开 Eclipse 站点缓慢的 48 MiB 单文件下载。仅当当前 nixpkgs 没有可用包时才回退到 Eclipse 官方包；回退下载使用 aria2 多连接，并把断点保存在 `.hydro-batter-runtime/cache`。网络受限时也可先用 `./install.sh --skip-jdtls` 完成 C++/Python 环境，或通过 `JDTLS_DOWNLOAD_URL` 指向可信的内网缓存；下载完成后仍会使用 Eclipse 官方 SHA-256 校验。
 
@@ -50,7 +61,7 @@ hydrooj addon add "$(pwd)"
 
 在 C++ 的 `vector<int> values` 后输入 `values.pu`，会优先建议 `push_back(value)`；Python 的 `items.ap` 会得到 `append(value)`；Java 的 `Map` 变量输入 `.getO` 会得到 `getOrDefault(key, defaultValue)`。用户自定义方法的返回类型也会继续传播，例如 `graph.neighbors(1).ap` 可以根据 `neighbors` 的返回注解继续补全。插件也会补全 `#include <...>`、Python/Java 的 `import`、`std::`/`Arrays.`/`Math.` 等静态成员，以及当前文件中声明的函数与方法。函数候选使用 Monaco snippet，接受后可继续按 <kbd>Tab</kbd> 在参数占位之间移动。
 
-编辑器右下角显示 `Batter 1.3.2 · 补全已就绪 · 语法分析已就绪 · 语言服务器已就绪` 时，表示插件、Tree-sitter 和当前语言的 LSP 都已经挂载到 Monaco。后面的 `8 diagnostics` 表示当前文件共有 8 条轻量/LSP 诊断，橙色只是提醒存在问题，不是插件加载失败。插件会读取站点的 `LANGS` 配置，并兼容 `cpp`、`c_cpp`、`text/x-c++src`、`python3` 等常见别名。LSP 启动期间或连接失败时仍会使用 Tree-sitter 与静态目录补全，不会阻塞编辑器。
+编辑器右下角显示 `Batter 1.3.3 · 补全已就绪 · 语法分析已就绪 · 语言服务器已就绪` 时，表示插件、Tree-sitter 和当前语言的 LSP 都已经挂载到 Monaco。后面的 `8 diagnostics` 表示当前文件共有 8 条轻量/LSP 诊断，橙色只是提醒存在问题，不是插件加载失败。插件会读取站点的 `LANGS` 配置，并兼容 `cpp`、`c_cpp`、`text/x-c++src`、`python3` 等常见别名。LSP 启动期间或连接失败时仍会使用 Tree-sitter 与静态目录补全，不会阻塞编辑器。
 
 | 操作 | 快捷键 |
 | --- | --- |
@@ -61,7 +72,7 @@ hydrooj addon add "$(pwd)"
 
 恢复和清除草稿也可以从 Monaco 右键菜单或命令面板执行。
 
-如果升级后仍显示旧版本，请重启 Hydro 服务并对题目页执行一次强制刷新。浏览器控制台中输入 `UiContext.hydroBatterCodeEdit` 可确认后端插件版本和可用的 `lspLanguages`，输入 `window.HydroBatterCodeEdit` 可以查看前端版本、Tree-sitter/LSP 状态、编辑器数量和补全调用次数；两个对象中的版本都应为 `1.3.2`。
+如果升级后仍显示旧版本，请重启 Hydro 服务并对题目页执行一次强制刷新。浏览器控制台中输入 `UiContext.hydroBatterCodeEdit` 可确认后端插件版本和可用的 `lspLanguages`，输入 `window.HydroBatterCodeEdit` 可以查看前端版本、Tree-sitter/LSP 状态、编辑器数量和补全调用次数；两个对象中的版本都应为 `1.3.3`。
 
 ## 配置
 
@@ -69,7 +80,7 @@ hydrooj addon add "$(pwd)"
 
 - 各项能力的总开关；
 - LSP 总开关，以及 clangd、Pyright、JDT LS 的可执行文件路径；
-- clangd 使用的受信任 C++ 编译器；默认 `auto`，Linux 优先 GNU `g++`，macOS 优先 Homebrew 的版本化 `g++`；
+- clangd 使用的受信任 C++ 编译器；默认 `auto`，优先使用 GNU `g++`；
 - 全局/单用户最大 LSP 会话数、文档大小限制和空闲回收时间；
 - 自动保存和诊断的防抖时间；
 - 本地草稿保留天数；
