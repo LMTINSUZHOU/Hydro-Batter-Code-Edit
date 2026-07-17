@@ -1,7 +1,9 @@
 import {
-    Context, Schema, SystemModel, UiContextBase,
+    Context, Handler, NotFoundError, param, Schema, SystemModel, Types, UiContextBase,
 } from 'hydrooj';
+import { readFileSync } from 'node:fs';
 import { BatterEditorConfig, DEFAULT_EDITOR_CONFIG } from './types';
+import { treeSitterBrowserEsbuildPlugin } from './src/tree-sitter-esbuild';
 
 declare module 'hydrooj' {
     interface SystemKeys {
@@ -22,7 +24,27 @@ declare module 'hydrooj' {
 }
 
 export const name = 'hydro-batter-code-edit';
-export const version = '1.1.0';
+export const version = '1.2.0';
+
+const TREE_SITTER_ASSETS: Record<string, string> = {
+    'web-tree-sitter.wasm': require.resolve('web-tree-sitter/web-tree-sitter.wasm'),
+    'tree-sitter-cpp.wasm': require.resolve('tree-sitter-cpp/tree-sitter-cpp.wasm'),
+    'tree-sitter-python.wasm': require.resolve('tree-sitter-python/tree-sitter-python.wasm'),
+    'tree-sitter-java.wasm': require.resolve('tree-sitter-java/tree-sitter-java.wasm'),
+};
+
+class TreeSitterAssetHandler extends Handler {
+    noCheckPermView = true;
+
+    @param('name', Types.Filename)
+    async get(domainId: string, assetName: string) {
+        const assetPath = TREE_SITTER_ASSETS[assetName];
+        if (!assetPath) throw new NotFoundError(assetName);
+        this.response.type = 'application/wasm';
+        this.response.addHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        this.response.body = readFileSync(assetPath);
+    }
+}
 
 const settingSchema = Schema.object({
     'hydro-batter-code-edit': Schema.object({
@@ -76,6 +98,16 @@ function getPublicConfig(): BatterEditorConfig & { version: string } {
 }
 
 export function apply(ctx: Context) {
+    const ui = (global as any).Hydro?.ui;
+    const esbuildPlugins = ui && (ui.esbuildPlugins ||= []);
+    if (esbuildPlugins && !esbuildPlugins.some((plugin: { name?: string }) => plugin.name === treeSitterBrowserEsbuildPlugin.name)) {
+        esbuildPlugins.push(treeSitterBrowserEsbuildPlugin);
+        ctx.effect(() => () => {
+            const index = esbuildPlugins.indexOf(treeSitterBrowserEsbuildPlugin);
+            if (index >= 0) esbuildPlugins.splice(index, 1);
+        });
+    }
+
     ctx.inject(['setting'], (child: Context) => {
         child.setting.SystemSetting(settingSchema);
     });
@@ -95,6 +127,7 @@ export function apply(ctx: Context) {
             'No local draft was found': 'No local draft was found',
             'No template is available for this language': 'No template is available for this language',
             'Completion ready': 'Completion ready',
+            'Syntax analysis ready': 'Syntax analysis ready',
             'Draft saved at {0}': 'Draft saved at {0}',
             '{0} diagnostics': '{0} diagnostics',
             Cancel: 'Cancel',
@@ -113,6 +146,7 @@ export function apply(ctx: Context) {
             'No local draft was found': '没有找到本地草稿',
             'No template is available for this language': '该语言暂无可用模板',
             'Completion ready': '补全已就绪',
+            'Syntax analysis ready': '语法分析已就绪',
             'Draft saved at {0}': '草稿已于 {0} 保存',
             '{0} diagnostics': '{0} 个诊断',
             Cancel: '取消',
@@ -120,6 +154,12 @@ export function apply(ctx: Context) {
     });
 
     if (process.env.HYDRO_CLI) return;
+
+    ctx.Route(
+        'hydro_batter_code_edit_tree_sitter_asset',
+        '/hydro-batter-code-edit/wasm/:name',
+        TreeSitterAssetHandler,
+    );
 
     ctx.effect(() => {
         Object.defineProperty(UiContextBase, 'hydroBatterCodeEdit', {

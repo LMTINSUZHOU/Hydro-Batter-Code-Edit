@@ -6,8 +6,10 @@ import {
   CompletionSymbolKind, getCompletionSnippets, getCompletionSymbols, getSupportedLanguages,
   getTemplates, getUniqueCompletionSymbol, normalizeLanguage,
 } from '../src/catalog';
+import { getAutoImportEdit } from '../src/auto-import';
 import {
-  analyzeCompletionDocument, CompletionAnalysis, getIdeCompletionResult, IdeCompletionKind,
+  analyzeCompletionDocument, CompletionAnalysis, getIdeCompletionResult, getIdeSignatureHelp,
+  IdeCompletionKind,
 } from '../src/completion-engine';
 import { diagnoseCode } from '../src/diagnostics';
 import {
@@ -15,13 +17,17 @@ import {
 } from '../src/drafts';
 import { formatCode, supportsFallbackFormatting } from '../src/formatter';
 import { BatterEditorConfig, DEFAULT_EDITOR_CONFIG } from '../types';
+import {
+  getReadySyntaxFacts, getSyntaxEngineStatus, prepareSyntaxModel,
+} from './tree-sitter-service';
 
-const PLUGIN_VERSION = '1.1.0';
+const PLUGIN_VERSION = '1.2.0';
 const MARKER_OWNER = 'hydro-batter-code-edit';
 const supportedLanguages = new Set(getSupportedLanguages());
 const sessions = new Set<EditorSession>();
 const attachedEditors = new WeakMap<Monaco.editor.IStandaloneCodeEditor, EditorSession>();
 const completionProviderLanguages = new Set<string>();
+const signatureProviderLanguages = new Set<string>();
 const formattingProviderLanguages = new Set<string>();
 const languageBindings = new Map<string, string>();
 const completionAnalysisCache = new WeakMap<Monaco.editor.ITextModel, {
@@ -43,6 +49,7 @@ interface RuntimeStatus {
   registeredLanguages: string[];
   editorCount: number;
   completionRequests: number;
+  syntaxEngine: ReturnType<typeof getSyntaxEngineStatus>;
   lastCompletion?: {
     language: string;
     prefix: string;
@@ -61,6 +68,7 @@ const runtimeStatus: RuntimeStatus = {
   registeredLanguages: [],
   editorCount: 0,
   completionRequests: 0,
+  syntaxEngine: getSyntaxEngineStatus(),
 };
 (window as any).HydroBatterCodeEdit = runtimeStatus;
 
@@ -141,9 +149,13 @@ function catalogLanguageFor(monacoLanguage: string): string {
 
 function getCompletionAnalysis(model: Monaco.editor.ITextModel, language: string): CompletionAnalysis {
   const version = model.getVersionId();
+  const syntaxFacts = getReadySyntaxFacts(model, language);
   const cached = completionAnalysisCache.get(model);
-  if (cached?.version === version && cached.language === language) return cached.analysis;
-  const analysis = analyzeCompletionDocument(model.getValue(), language);
+  const expectedEngine = syntaxFacts ? 'tree-sitter' : 'fallback';
+  if (cached?.version === version
+    && cached.language === language
+    && cached.analysis.syntaxEngine === expectedEngine) return cached.analysis;
+  const analysis = analyzeCompletionDocument(model.getValue(), language, syntaxFacts);
   completionAnalysisCache.set(model, { language, version, analysis });
   return analysis;
 }
@@ -173,6 +185,9 @@ function ensureCompletionProvider(
     providerDisposables.push(monaco.languages.registerCompletionItemProvider(monacoLanguage, {
       provideCompletionItems(model, position) {
         const language = catalogLanguageFor(model.getLanguageId()) || catalogLanguage;
+        void prepareSyntaxModel(model, language).then(() => {
+          runtimeStatus.syntaxEngine = getSyntaxEngineStatus();
+        });
         const code = model.getValue();
         const offset = model.getOffsetAt(position);
         const ideCompletion = getIdeCompletionResult(
@@ -232,20 +247,27 @@ function ensureCompletionProvider(
         });
         return {
           suggestions: unique([
-            ...ideCompletion.items.map((item, index) => ({
-              label: item.label,
-              detail: item.detail,
-              documentation: item.documentation || item.detail,
-              filterText: item.filterText || item.label,
-              insertText: item.insertText,
-              insertTextRules: item.snippet
-                ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
-                : undefined,
-              kind: ideKinds[item.kind],
-              preselect: index === 0,
-              range: item.replacement ? completionRange(model, item.replacement) : range,
-              sortText: item.sortText,
-            })),
+            ...ideCompletion.items.map((item, index) => {
+              const autoImport = item.autoImport ? getAutoImportEdit(code, language, item.label) : undefined;
+              return {
+                label: item.label,
+                detail: autoImport ? `${item.detail} · ${autoImport.description}` : item.detail,
+                documentation: item.documentation || item.detail,
+                filterText: item.filterText || item.label,
+                insertText: item.insertText,
+                insertTextRules: item.snippet
+                  ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
+                  : undefined,
+                kind: ideKinds[item.kind],
+                preselect: index === 0,
+                range: item.replacement ? completionRange(model, item.replacement) : range,
+                sortText: item.sortText,
+                additionalTextEdits: autoImport ? [{
+                  range: completionRange(model, autoImport),
+                  text: autoImport.text,
+                }] : undefined,
+              };
+            }),
             ...snippets.map((snippet, index) => ({
               label: snippet.label,
               detail: snippet.detail,
@@ -257,17 +279,24 @@ function ensureCompletionProvider(
               range,
               sortText: `10${index.toString().padStart(2, '0')}`,
             })),
-            ...symbols.map((symbol, index) => ({
-              label: symbol.label,
-              detail: symbol.detail,
-              documentation: symbol.detail,
-              filterText: symbol.label,
-              insertText: symbol.insertText || symbol.label,
-              kind: symbolKinds[symbol.kind],
-              preselect: index === 0,
-              range,
-              sortText: `20${symbol.label.toLowerCase()}`,
-            })),
+            ...symbols.map((symbol, index) => {
+              const autoImport = getAutoImportEdit(code, language, symbol.label);
+              return {
+                label: symbol.label,
+                detail: autoImport ? `${symbol.detail} · ${autoImport.description}` : symbol.detail,
+                documentation: symbol.detail,
+                filterText: symbol.label,
+                insertText: symbol.insertText || symbol.label,
+                kind: symbolKinds[symbol.kind],
+                preselect: index === 0,
+                range,
+                sortText: `20${symbol.label.toLowerCase()}`,
+                additionalTextEdits: autoImport ? [{
+                  range: completionRange(model, autoImport),
+                  text: autoImport.text,
+                }] : undefined,
+              };
+            }),
           ]),
         };
       },
@@ -278,6 +307,44 @@ function ensureCompletionProvider(
     throw error;
   }
   runtimeStatus.registeredLanguages = Array.from(completionProviderLanguages).sort();
+}
+
+function ensureSignatureProvider(
+  monaco: typeof Monaco,
+  monacoLanguage: string,
+  catalogLanguage: string,
+) {
+  if (!config.completion || !catalogLanguage || signatureProviderLanguages.has(monacoLanguage)) return;
+  signatureProviderLanguages.add(monacoLanguage);
+  try {
+    providerDisposables.push(monaco.languages.registerSignatureHelpProvider(monacoLanguage, {
+      signatureHelpTriggerCharacters: ['(', ','],
+      signatureHelpRetriggerCharacters: [','],
+      provideSignatureHelp(model, position) {
+        const language = catalogLanguageFor(model.getLanguageId()) || catalogLanguage;
+        void prepareSyntaxModel(model, language).then(() => {
+          runtimeStatus.syntaxEngine = getSyntaxEngineStatus();
+        });
+        const signature = getIdeSignatureHelp(
+          getCompletionAnalysis(model, language),
+          model.getValue(),
+          model.getOffsetAt(position),
+        );
+        if (!signature) return null;
+        return {
+          value: {
+            activeSignature: 0,
+            activeParameter: signature.activeParameter,
+            signatures: signature.signatures,
+          },
+          dispose: () => undefined,
+        };
+      },
+    }));
+  } catch (error) {
+    signatureProviderLanguages.delete(monacoLanguage);
+    throw error;
+  }
 }
 
 function ensureFormattingProvider(
@@ -305,6 +372,7 @@ function ensureLanguageProviders(monaco: typeof Monaco, monacoLanguage: string, 
   if (!language) return;
   languageBindings.set(monacoLanguage, language);
   ensureCompletionProvider(monaco, monacoLanguage, language);
+  ensureSignatureProvider(monaco, monacoLanguage, language);
   ensureFormattingProvider(monaco, monacoLanguage, language);
 }
 
@@ -623,14 +691,23 @@ class EditorSession {
     const prefix = model.getValueInRange(range);
     const symbol = getUniqueCompletionSymbol(language, prefix);
     if (!symbol) return null;
-    return { range, text: symbol.insertText || symbol.label };
+    const edits: Monaco.editor.IIdentifiedSingleEditOperation[] = [{
+      range,
+      text: symbol.insertText || symbol.label,
+    }];
+    const autoImport = getAutoImportEdit(model.getValue(), language, symbol.label);
+    if (autoImport) edits.push({
+      range: completionRange(model, autoImport),
+      text: autoImport.text,
+    });
+    return edits;
   }
 
   private expandUniqueCompletion() {
     const completion = this.getUniqueCompletionExpansion();
     if (!completion) return;
     this.editor.pushUndoStop();
-    this.editor.executeEdits('hydro-batter-tab-completion', [{ range: completion.range, text: completion.text }]);
+    this.editor.executeEdits('hydro-batter-tab-completion', completion);
     this.editor.pushUndoStop();
     this.editor.focus();
   }
@@ -678,6 +755,10 @@ class EditorSession {
       return;
     }
     ensureLanguageProviders(this.monaco, model.getLanguageId(), language);
+    void prepareSyntaxModel(model, language).then(() => {
+      runtimeStatus.syntaxEngine = getSyntaxEngineStatus();
+      this.updateStatus();
+    });
     this.statusNode.style.display = '';
     this.applyCompletionOptions();
     this.modelDisposables.push(model.onDidChangeContent(() => {
@@ -767,6 +848,9 @@ class EditorSession {
     const parts: string[] = [`Batter ${PLUGIN_VERSION}`];
     if (config.completion && catalogLanguageFor(model.getLanguageId())) {
       parts.push(i18n('Completion ready'));
+      if (runtimeStatus.syntaxEngine.readyLanguages.includes(catalogLanguageFor(model.getLanguageId()))) {
+        parts.push(i18n('Syntax analysis ready'));
+      }
     }
     if (config.autosave) {
       const draft = readDraft(localStorage, getDraftContext(model.getLanguageId()));

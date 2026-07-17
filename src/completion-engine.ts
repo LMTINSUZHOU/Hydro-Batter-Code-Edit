@@ -1,4 +1,5 @@
 import { normalizeLanguage } from './catalog';
+import type { SyntaxFacts } from './syntax-facts';
 
 export type IdeCompletionKind =
     | 'class'
@@ -20,6 +21,9 @@ export interface IdeCompletionItem {
     documentation?: string;
     kind: IdeCompletionKind;
     snippet?: boolean;
+    parameters?: string[];
+    returnType?: string;
+    autoImport?: boolean;
     filterText?: string;
     sortText: string;
     replacement?: { start: number; end: number };
@@ -29,6 +33,10 @@ export interface CompletionAnalysis {
     language: string;
     variables: Map<string, string>;
     symbols: IdeCompletionItem[];
+    scopedVariables: Array<{ name: string; type: string; start: number; scopeStart: number; scopeEnd: number }>;
+    typeMembers: Map<string, MemberDefinition[]>;
+    functionReturns: Map<string, string>;
+    syntaxEngine: 'fallback' | 'tree-sitter';
 }
 
 export interface IdeCompletionResult {
@@ -38,12 +46,23 @@ export interface IdeCompletionResult {
     items: IdeCompletionItem[];
 }
 
+export interface IdeSignatureHelpResult {
+    activeParameter: number;
+    signatures: Array<{
+        label: string;
+        documentation?: string;
+        parameters: Array<{ label: string; documentation?: string }>;
+    }>;
+}
+
 interface MemberDefinition {
     label: string;
     detail: string;
     insertText?: string;
     kind?: 'field' | 'method' | 'property';
     documentation?: string;
+    parameters?: string[];
+    returnType?: string;
 }
 
 const CPP_HEADERS = [
@@ -67,7 +86,13 @@ const JAVA_IMPORTS = [
     'java.util.Set', 'java.util.StringTokenizer', 'java.util.TreeMap', 'java.util.TreeSet',
 ];
 
-function method(label: string, parameters: string[], detail: string, documentation?: string): MemberDefinition {
+function method(
+    label: string,
+    parameters: string[],
+    detail: string,
+    documentation?: string,
+    returnType?: string,
+): MemberDefinition {
     const placeholders = parameters.map((parameter, index) => `\${${index + 1}:${parameter}}`);
     return {
         label,
@@ -75,11 +100,13 @@ function method(label: string, parameters: string[], detail: string, documentati
         detail,
         documentation,
         kind: 'method',
+        parameters,
+        returnType,
     };
 }
 
 function field(label: string, detail: string, documentation?: string): MemberDefinition {
-    return { label, detail, documentation, kind: 'field' };
+    return { label, detail, documentation, kind: 'field', parameters: [] };
 }
 
 const SIZE_EMPTY_CLEAR = [
@@ -384,6 +411,33 @@ const JAVA_MEMBERS: Record<string, MemberDefinition[]> = {
     'System.out': [method('print', ['value'], 'void System.out.print(value)'), method('println', ['value'], 'void System.out.println(value)'), method('printf', ['format', 'args'], 'PrintStream System.out.printf(String format, Object... args)')],
 };
 
+const MEMBER_RETURN_TYPES: Record<string, Record<string, Record<string, string>>> = {
+    cpp: {
+        string: { substr: 'string' },
+    },
+    python: {
+        list: { copy: 'list' },
+        str: {
+            strip: 'str', lstrip: 'str', rstrip: 'str', replace: 'str', join: 'str', lower: 'str', upper: 'str',
+            split: 'list',
+        },
+        dict: { copy: 'dict', keys: 'dict', values: 'dict', items: 'dict' },
+        set: { union: 'set', intersection: 'set', difference: 'set' },
+    },
+    java: {
+        String: {
+            substring: 'String', replace: 'String', trim: 'String', toLowerCase: 'String',
+            toUpperCase: 'String', split: 'Array', toCharArray: 'Array',
+        },
+        StringBuilder: {
+            append: 'StringBuilder', insert: 'StringBuilder', delete: 'StringBuilder',
+            deleteCharAt: 'StringBuilder', reverse: 'StringBuilder', toString: 'String',
+        },
+        Map: { keySet: 'Set', values: 'Collection', entrySet: 'Set' },
+        Arrays: { copyOf: 'Array', asList: 'List' },
+    },
+};
+
 const GLOBAL_CALLS: Record<string, MemberDefinition[]> = {
     cpp: [
         method('sort', ['first', 'last'], 'void sort(RandomIt first, RandomIt last)'),
@@ -398,11 +452,11 @@ const GLOBAL_CALLS: Record<string, MemberDefinition[]> = {
     ],
     python: [
         method('print', ['value'], 'print(*objects, sep=" ", end="\\n") -> None'),
-        method('input', [], 'input(prompt="") -> str'), method('len', ['value'], 'len(value) -> int'),
+        method('input', [], 'input(prompt="") -> str', undefined, 'str'), method('len', ['value'], 'len(value) -> int'),
         method('range', ['stop'], 'range(stop) / range(start, stop, step) -> range'),
         method('enumerate', ['iterable'], 'enumerate(iterable, start=0) -> enumerate'),
         method('zip', ['iterables'], 'zip(*iterables) -> zip'),
-        method('sorted', ['iterable'], 'sorted(iterable, *, key=None, reverse=False) -> list'),
+        method('sorted', ['iterable'], 'sorted(iterable, *, key=None, reverse=False) -> list', undefined, 'list'),
         method('sum', ['iterable'], 'sum(iterable, start=0) -> number'),
         method('min', ['iterable'], 'min(iterable) -> T'), method('max', ['iterable'], 'max(iterable) -> T'),
     ],
@@ -445,6 +499,13 @@ function normalizeJavaType(type: string): string {
     if (['HashMap', 'LinkedHashMap', 'TreeMap'].includes(base)) return 'Map';
     if (['HashSet', 'TreeSet'].includes(base)) return 'Set';
     return base;
+}
+
+function normalizeSemanticType(language: string, type: string): string {
+    if (language === 'cpp') return normalizeCppType(type);
+    if (language === 'java') return normalizeJavaType(type);
+    if (language === 'python') return normalizePythonAnnotation(type) || type.split(/[\[|\s]/)[0];
+    return type;
 }
 
 function symbolSnippet(name: string, parameters: string[]): string {
@@ -492,7 +553,7 @@ function analyzeCpp(code: string, analysis: CompletionAnalysis) {
         const parameters = parameterNames(match[2], 'cpp');
         pushSymbol(analysis.symbols, {
             label: name, insertText: symbolSnippet(name, parameters), detail: `${name}(${match[2].trim()})`,
-            documentation: 'Function declared in the current file.', kind: 'function', snippet: true,
+            documentation: 'Function declared in the current file.', kind: 'function', snippet: true, parameters,
         });
     }
     for (const match of code.matchAll(/\b(class|struct|enum)\s+([A-Za-z_]\w*)/g)) {
@@ -543,7 +604,7 @@ function analyzePython(code: string, analysis: CompletionAnalysis) {
         const parameters = parameterNames(match[2], 'python').filter((item) => item !== 'self' && item !== 'cls');
         pushSymbol(analysis.symbols, {
             label: match[1], insertText: symbolSnippet(match[1], parameters), detail: `def ${match[1]}(${match[2].trim()})`,
-            documentation: 'Function declared in the current file.', kind: 'function', snippet: true,
+            documentation: 'Function declared in the current file.', kind: 'function', snippet: true, parameters,
         });
         for (const parameter of match[2].split(',')) {
             const typed = parameter.trim().match(/^\**([A-Za-z_]\w*)\s*:\s*([^=]+)/);
@@ -596,7 +657,7 @@ function analyzeJava(code: string, analysis: CompletionAnalysis) {
         const parameters = parameterNames(match[2], 'java');
         pushSymbol(analysis.symbols, {
             label: name, insertText: symbolSnippet(name, parameters), detail: `${name}(${match[2].trim()})`,
-            documentation: 'Method declared in the current file.', kind: 'method', snippet: true,
+            documentation: 'Method declared in the current file.', kind: 'method', snippet: true, parameters,
         });
     }
     for (const match of code.matchAll(/\b(class|interface|enum|record)\s+([A-Za-z_$][\w$]*)/g)) {
@@ -605,12 +666,66 @@ function analyzeJava(code: string, analysis: CompletionAnalysis) {
     }
 }
 
-export function analyzeCompletionDocument(code: string, language: string): CompletionAnalysis {
+function applySyntaxFacts(analysis: CompletionAnalysis, facts: SyntaxFacts) {
+    for (const variable of facts.variables) {
+        if (!variable.type) continue;
+        const type = normalizeSemanticType(analysis.language, variable.type);
+        analysis.variables.set(variable.name, type);
+        analysis.scopedVariables.push({ ...variable, type });
+        pushSymbol(analysis.symbols, {
+            label: variable.name,
+            insertText: variable.name,
+            detail: `${variable.name}: ${type} · Tree-sitter`,
+            kind: 'variable',
+        });
+    }
+    for (const item of facts.functions) {
+        const returnType = item.returnType ? normalizeSemanticType(analysis.language, item.returnType) : undefined;
+        if (returnType) analysis.functionReturns.set(item.name, returnType);
+        pushSymbol(analysis.symbols, {
+            label: item.name,
+            insertText: symbolSnippet(item.name, item.parameters),
+            detail: item.detail,
+            documentation: 'Function parsed from the current syntax tree.',
+            kind: 'function',
+            snippet: true,
+            parameters: item.parameters,
+            returnType,
+        });
+    }
+    for (const item of facts.members) {
+        const members = analysis.typeMembers.get(item.owner) || [];
+        const returnType = item.returnType ? normalizeSemanticType(analysis.language, item.returnType) : undefined;
+        members.push(item.kind === 'method'
+            ? method(item.name, item.parameters, item.detail, 'Member parsed from the current class.', returnType)
+            : { ...field(item.name, item.detail, 'Field parsed from the current class.'), returnType });
+        analysis.typeMembers.set(item.owner, members);
+    }
+}
+
+export function analyzeCompletionDocument(
+    code: string,
+    language: string,
+    syntaxFacts?: SyntaxFacts,
+): CompletionAnalysis {
     const normalized = normalizeLanguage(language);
-    const analysis: CompletionAnalysis = { language: normalized, variables: new Map(), symbols: [] };
-    if (normalized === 'cpp') analyzeCpp(code, analysis);
-    else if (normalized === 'python') analyzePython(code, analysis);
-    else if (normalized === 'java') analyzeJava(code, analysis);
+    const analysis: CompletionAnalysis = {
+        language: normalized,
+        variables: new Map(),
+        symbols: [],
+        scopedVariables: [],
+        typeMembers: new Map(),
+        functionReturns: new Map(),
+        syntaxEngine: syntaxFacts?.engine || 'fallback',
+    };
+    for (const definition of GLOBAL_CALLS[normalized] || []) {
+        if (definition.returnType) analysis.functionReturns.set(definition.label, definition.returnType);
+    }
+    const analysisCode = syntaxFacts?.maskedCode || code;
+    if (normalized === 'cpp') analyzeCpp(analysisCode, analysis);
+    else if (normalized === 'python') analyzePython(analysisCode, analysis);
+    else if (normalized === 'java') analyzeJava(analysisCode, analysis);
+    if (syntaxFacts?.language === normalized) applySyntaxFacts(analysis, syntaxFacts);
     const unique = new Map<string, IdeCompletionItem>();
     for (const item of analysis.symbols) {
         const key = `${item.kind}:${item.label}:${item.insertText}`;
@@ -658,42 +773,104 @@ function getImportCompletion(code: string, offset: number, language: string): Id
     return undefined;
 }
 
-function getMemberType(language: string, receiver: string, analysis: CompletionAnalysis): string | undefined {
-    if (language === 'cpp') {
-        if (receiver === 'std') return 'std';
-        return analysis.variables.get(receiver);
-    }
-    if (language === 'python') {
-        const direct = PYTHON_MEMBERS[receiver] ? receiver : undefined;
-        return analysis.variables.get(receiver) || direct;
-    }
-    if (language === 'java') {
-        if (JAVA_MEMBERS[receiver]) return receiver;
-        return analysis.variables.get(receiver.split('.').at(-1) || receiver);
-    }
-    return undefined;
+function getVariableType(analysis: CompletionAnalysis, name: string, offset: number): string | undefined {
+    const namedVariables = analysis.scopedVariables.filter((variable) => variable.name === name);
+    const scoped = namedVariables
+        .filter((variable) => variable.name === name
+            && variable.start <= offset
+            && variable.scopeStart <= offset
+            && variable.scopeEnd >= offset)
+        .sort((left, right) => right.start - left.start)[0];
+    if (namedVariables.length) return scoped?.type;
+    return analysis.variables.get(name);
 }
 
-function getMemberDefinitions(language: string, type: string): MemberDefinition[] {
-    if (language === 'cpp') return CPP_MEMBERS[type] || [];
-    if (language === 'python') return PYTHON_MEMBERS[type] || [];
-    if (language === 'java') return JAVA_MEMBERS[type] || [];
-    return [];
+function getMemberDefinitions(
+    language: string,
+    type: string,
+    analysis?: CompletionAnalysis,
+): MemberDefinition[] {
+    const custom = analysis?.typeMembers.get(type) || [];
+    const builtin = language === 'cpp'
+        ? CPP_MEMBERS[type] || []
+        : language === 'python'
+            ? PYTHON_MEMBERS[type] || []
+            : language === 'java'
+                ? JAVA_MEMBERS[type] || []
+                : [];
+    const returnTypes = MEMBER_RETURN_TYPES[language]?.[type] || {};
+    return [...custom, ...builtin].map((definition) => definition.returnType || !returnTypes[definition.label]
+        ? definition
+        : { ...definition, returnType: returnTypes[definition.label] });
+}
+
+function splitReceiver(receiver: string, language: string): string[] {
+    const parts: string[] = [];
+    let start = 0;
+    let roundDepth = 0;
+    let squareDepth = 0;
+    let angleDepth = 0;
+    for (let index = 0; index < receiver.length; index += 1) {
+        const character = receiver[index];
+        if (character === '(') roundDepth += 1;
+        else if (character === ')') roundDepth = Math.max(0, roundDepth - 1);
+        else if (character === '[') squareDepth += 1;
+        else if (character === ']') squareDepth = Math.max(0, squareDepth - 1);
+        else if (character === '<' && language === 'cpp') angleDepth += 1;
+        else if (character === '>' && language === 'cpp' && angleDepth) angleDepth -= 1;
+        if (roundDepth || squareDepth || angleDepth) continue;
+        const operatorLength = receiver.startsWith('->', index) || receiver.startsWith('::', index) ? 2
+            : character === '.' ? 1 : 0;
+        if (!operatorLength) continue;
+        parts.push(receiver.slice(start, index).trim());
+        start = index + operatorLength;
+        index += operatorLength - 1;
+    }
+    parts.push(receiver.slice(start).trim());
+    return parts.filter(Boolean);
+}
+
+function resolveReceiverType(
+    language: string,
+    receiver: string,
+    analysis: CompletionAnalysis,
+    offset: number,
+): string | undefined {
+    if (language === 'cpp' && receiver === 'std') return 'std';
+    if (language === 'python' && PYTHON_MEMBERS[receiver]) return receiver;
+    if (language === 'java' && JAVA_MEMBERS[receiver]) return receiver;
+    const parts = splitReceiver(receiver, language);
+    if (!parts.length) return undefined;
+    const first = parts[0];
+    const firstCall = first.match(/^([A-Za-z_$][\w$]*)\s*\(/);
+    let type = firstCall
+        ? analysis.functionReturns.get(firstCall[1]) || normalizeSemanticType(language, firstCall[1])
+        : getVariableType(analysis, first, offset);
+    if (!type && analysis.typeMembers.has(first)) type = first;
+    for (const part of parts.slice(1)) {
+        if (!type) return undefined;
+        const name = part.match(/^([A-Za-z_$][\w$]*)/)?.[1];
+        if (!name) return undefined;
+        const definition = getMemberDefinitions(language, type, analysis)
+            .find((member) => member.label === name);
+        type = definition?.returnType;
+    }
+    return type;
 }
 
 function getMemberCompletion(code: string, offset: number, analysis: CompletionAnalysis): IdeCompletionResult | undefined {
     const before = code.slice(0, offset);
-    const pattern = analysis.language === 'cpp'
-        ? /([A-Za-z_]\w*)\s*(?:\.|->|::)\s*([A-Za-z_]\w*)?$/
-        : /([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.([A-Za-z_$][\w$]*)?$/;
+    const atom = '[A-Za-z_$][\\w$]*(?:\\s*<[^;\\n()]+>)?(?:\\s*\\([^()\\n]*\\))?';
+    const connector = analysis.language === 'cpp' ? '(?:\\.|->|::)' : '\\.';
+    const pattern = new RegExp(`(${atom}(?:\\s*${connector}\\s*${atom})*)\\s*${connector}\\s*([A-Za-z_$][\\w$]*)?$`);
     const match = before.match(pattern);
     if (!match) return undefined;
     const receiver = match[1];
     const prefix = match[2] || '';
-    const type = getMemberType(analysis.language, receiver, analysis);
+    const type = resolveReceiverType(analysis.language, receiver, analysis, offset);
     const replacement = { start: offset - prefix.length, end: offset };
     if (!type) return { context: 'member', exclusive: true, prefix, items: [] };
-    const entries = getMemberDefinitions(analysis.language, type)
+    const entries = getMemberDefinitions(analysis.language, type, analysis)
         .map((definition) => ({ definition, score: completionMatchScore(definition.label, prefix) }))
         .filter((entry): entry is { definition: MemberDefinition; score: number } => entry.score !== undefined)
         .sort((left, right) => left.score - right.score || left.definition.label.localeCompare(right.definition.label));
@@ -706,6 +883,8 @@ function getMemberCompletion(code: string, offset: number, analysis: CompletionA
             documentation: definition.documentation,
             kind: definition.kind || 'method',
             snippet: Boolean(definition.insertText),
+            parameters: definition.parameters,
+            returnType: definition.returnType,
             filterText: definition.label,
             sortText: `00${score.toString().padStart(3, '0')}${index.toString().padStart(3, '0')}`,
             replacement,
@@ -735,9 +914,20 @@ export function getIdeCompletionResult(
         documentation: definition.documentation,
         kind: 'function',
         snippet: Boolean(definition.insertText),
+        parameters: definition.parameters,
+        returnType: definition.returnType,
+        autoImport: true,
         sortText: '',
     }));
     const items = [...analysis.symbols, ...globalCalls]
+        .filter((item) => {
+            if (item.kind !== 'variable') return true;
+            const scoped = analysis.scopedVariables.filter((variable) => variable.name === item.label);
+            if (!scoped.length) return true;
+            return scoped.some((variable) => variable.start <= safeOffset
+                && variable.scopeStart <= safeOffset
+                && variable.scopeEnd >= safeOffset);
+        })
         .map((item) => ({ item, score: completionMatchScore(item.label, prefix) }))
         .filter((entry): entry is { item: IdeCompletionItem; score: number } => entry.score !== undefined)
         .filter(({ item }) => item.label.toLowerCase() !== prefix.toLowerCase())
@@ -748,4 +938,86 @@ export function getIdeCompletionResult(
             replacement: { start: safeOffset - prefix.length, end: safeOffset },
         }));
     return { context: 'global', exclusive: false, prefix, items };
+}
+
+function findCallContext(code: string, offset: number): { callee: string; activeParameter: number } | undefined {
+    let depth = 0;
+    let openIndex = -1;
+    for (let index = offset - 1; index >= 0; index -= 1) {
+        const character = code[index];
+        if (character === ')') depth += 1;
+        else if (character === '(') {
+            if (!depth) {
+                openIndex = index;
+                break;
+            }
+            depth -= 1;
+        }
+    }
+    if (openIndex < 0) return undefined;
+    const calleeMatch = code.slice(0, openIndex).match(/([A-Za-z_$][\w$]*(?:(?:\.|->|::)[A-Za-z_$][\w$]*)*)\s*$/);
+    if (!calleeMatch) return undefined;
+    let activeParameter = 0;
+    let roundDepth = 0;
+    let squareDepth = 0;
+    let braceDepth = 0;
+    let quote = '';
+    for (let index = openIndex + 1; index < offset; index += 1) {
+        const character = code[index];
+        if (quote) {
+            if (character === quote && code[index - 1] !== '\\') quote = '';
+            continue;
+        }
+        if (character === '"' || character === "'") quote = character;
+        else if (character === '(') roundDepth += 1;
+        else if (character === ')') roundDepth = Math.max(0, roundDepth - 1);
+        else if (character === '[') squareDepth += 1;
+        else if (character === ']') squareDepth = Math.max(0, squareDepth - 1);
+        else if (character === '{') braceDepth += 1;
+        else if (character === '}') braceDepth = Math.max(0, braceDepth - 1);
+        else if (character === ',' && !roundDepth && !squareDepth && !braceDepth) activeParameter += 1;
+    }
+    return { callee: calleeMatch[1], activeParameter };
+}
+
+export function getIdeSignatureHelp(
+    analysis: CompletionAnalysis,
+    code: string,
+    offset: number,
+): IdeSignatureHelpResult | undefined {
+    const context = findCallContext(code, Math.max(0, Math.min(offset, code.length)));
+    if (!context) return undefined;
+    const memberMatch = context.callee.match(/^(.*)(?:\.|->|::)([A-Za-z_$][\w$]*)$/);
+    let definitions: MemberDefinition[] = [];
+    if (memberMatch) {
+        const type = resolveReceiverType(analysis.language, memberMatch[1], analysis, offset);
+        if (type) definitions = getMemberDefinitions(analysis.language, type, analysis)
+            .filter((definition) => definition.label === memberMatch[2] && definition.kind !== 'field');
+    } else {
+        const name = context.callee;
+        definitions = (GLOBAL_CALLS[analysis.language] || []).filter((definition) => definition.label === name);
+        for (const symbol of analysis.symbols.filter((item) => item.label === name && item.parameters)) {
+            definitions.push({
+                label: symbol.label,
+                detail: symbol.detail,
+                documentation: symbol.documentation,
+                kind: 'method',
+                parameters: symbol.parameters,
+                returnType: symbol.returnType,
+            });
+        }
+    }
+    const unique = new Map<string, MemberDefinition>();
+    for (const definition of definitions) unique.set(`${definition.detail}:${definition.parameters?.join(',')}`, definition);
+    const signatures = Array.from(unique.values()).map((definition) => ({
+        label: definition.detail,
+        documentation: definition.documentation,
+        parameters: (definition.parameters || []).map((parameter) => ({ label: parameter })),
+    }));
+    if (!signatures.length) return undefined;
+    const widestSignature = Math.max(...signatures.map((signature) => signature.parameters.length));
+    return {
+        activeParameter: Math.min(context.activeParameter, Math.max(0, widestSignature - 1)),
+        signatures,
+    };
 }

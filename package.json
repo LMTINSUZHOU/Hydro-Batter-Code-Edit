@@ -1,7 +1,7 @@
 {
   "name": "hydro-batter-code-edit",
-  "version": "1.1.0",
-  "description": "Monaco editor enhancements for HydroOJ: completion, templates, formatting, diagnostics and local autosave.",
+  "version": "1.2.0",
+  "description": "IDE-like Monaco enhancements for HydroOJ with Tree-sitter completion, auto imports, signatures, formatting, diagnostics and autosave.",
   "main": "index.ts",
   "type": "commonjs",
   "files": [
@@ -27,6 +27,7 @@
   "devDependencies": {
     "@hydrooj/ui-default": "4.58.4",
     "@types/node": "^24.10.0",
+    "esbuild": "0.25.2",
     "hydrooj": "5.0.4",
     "monaco-editor": "0.52.2",
     "typescript": "5.9.3",
@@ -43,5 +44,11 @@
     "online-judge"
   ],
   "author": "Albert_Li <lmt_in_suzhou@outlook.com>",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "tree-sitter-cpp": "0.23.4",
+    "tree-sitter-java": "0.23.5",
+    "tree-sitter-python": "0.25.0",
+    "web-tree-sitter": "0.26.10"
+  }
 }

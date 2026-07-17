@@ -30,6 +30,7 @@ describe('frontend completion integration', () => {
 
     it('autoloads on an arbitrary Hydro page and registers the real Monaco language id', async () => {
         const providers = new Map<string, any>();
+        const signatureProviders = new Map<string, any>();
         const createEditor = vi.fn();
         const codeTextarea = { hidden: false, dataset: {}, value: 'int main() {}' };
         harness.monaco = {
@@ -43,6 +44,10 @@ describe('frontend completion integration', () => {
                     providers.set(language, provider);
                     return { dispose: () => undefined };
                 },
+                registerSignatureHelpProvider: (language: string, provider: any) => {
+                    signatureProviders.set(language, provider);
+                    return { dispose: () => undefined };
+                },
             },
             editor: {
                 create: createEditor,
@@ -54,7 +59,7 @@ describe('frontend completion integration', () => {
         const windowMock: any = {
             UiContext: {
                 hydroBatterCodeEdit: {
-                    version: '1.1.0',
+                    version: '1.2.0',
                     enabled: true,
                     completion: true,
                     templates: false,
@@ -96,9 +101,10 @@ describe('frontend completion integration', () => {
         expect(providers.has('c_cpp')).toBe(true);
         expect(providers.has('python3')).toBe(true);
         expect(providers.has('java')).toBe(true);
+        expect(signatureProviders.has('c_cpp')).toBe(true);
         expect(windowMock.HydroBatterCodeEdit).toMatchObject({
-            version: '1.1.0',
-            serverVersion: '1.1.0',
+            version: '1.2.0',
+            serverVersion: '1.2.0',
             loaded: true,
             pageName: 'site_specific_problem_page',
             completionEnabled: true,
@@ -112,10 +118,21 @@ describe('frontend completion integration', () => {
             getPositionAt: (offset: number) => ({ lineNumber: 1, column: offset + 1 }),
             getValue: () => 'qu',
             getVersionId: () => 1,
+            isDisposed: () => false,
+            onDidChangeContent: () => ({ dispose: () => undefined }),
+            onWillDispose: () => ({ dispose: () => undefined }),
             getWordUntilPosition: () => ({ startColumn: 1, endColumn: 3 }),
             getValueInRange: () => 'qu',
         }, { lineNumber: 1, column: 3 });
         expect(result.suggestions.some((item: any) => item.label === 'queue')).toBe(true);
+        expect(result.suggestions.find((item: any) => item.label === 'queue')).toMatchObject({
+            additionalTextEdits: [{
+                range: {
+                    startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1,
+                },
+                text: '#include <queue>\n',
+            }],
+        });
         expect(windowMock.HydroBatterCodeEdit.lastCompletion).toEqual({
             language: 'c_cpp',
             prefix: 'qu',
@@ -135,6 +152,9 @@ describe('frontend completion integration', () => {
             getPositionAt: positionAt,
             getValue: () => memberCode,
             getVersionId: () => 2,
+            isDisposed: () => false,
+            onDidChangeContent: () => ({ dispose: () => undefined }),
+            onWillDispose: () => ({ dispose: () => undefined }),
             getWordUntilPosition: () => ({ startColumn: 8, endColumn: 10 }),
             getValueInRange: () => 'pu',
         }, { lineNumber: 2, column: 10 });
@@ -156,6 +176,22 @@ describe('frontend completion integration', () => {
         expect(windowMock.HydroBatterCodeEdit.lastCompletion).toMatchObject({
             language: 'c_cpp', prefix: 'pu', count: 1, context: 'member',
         });
+
+        const signatureCode = 'vector<int> values;\nvalues.push_back(';
+        const signatureResult = signatureProviders.get('c_cpp').provideSignatureHelp({
+            getLanguageId: () => 'c_cpp',
+            getOffsetAt: () => signatureCode.length,
+            getPositionAt: positionAt,
+            getValue: () => signatureCode,
+            getVersionId: () => 3,
+            isDisposed: () => false,
+            onDidChangeContent: () => ({ dispose: () => undefined }),
+            onWillDispose: () => ({ dispose: () => undefined }),
+        }, { lineNumber: 2, column: 18 });
+        expect(signatureResult.value).toMatchObject({
+            activeParameter: 0,
+            signatures: [expect.objectContaining({ label: 'void push_back(const T& value)' })],
+        });
     });
 
     it('expands a unique prefix through the native Tab fallback without addAction', async () => {
@@ -171,9 +207,14 @@ describe('frontend completion integration', () => {
         };
         const model = {
             getLanguageId: () => 'cpp',
+            getValue: () => 'qu',
+            getVersionId: () => 1,
+            getPositionAt: (offset: number) => ({ lineNumber: 1, column: offset + 1 }),
             getWordUntilPosition: () => ({ startColumn: 1, endColumn: 3 }),
             getValueInRange: () => 'qu',
+            isDisposed: () => false,
             onDidChangeContent: () => ({ dispose: () => undefined }),
+            onWillDispose: () => ({ dispose: () => undefined }),
         };
         const editor = {
             _standaloneKeybindingService: null,
@@ -217,6 +258,7 @@ describe('frontend completion integration', () => {
                 },
                 CompletionItemInsertTextRule: { InsertAsSnippet: 4 },
                 registerCompletionItemProvider: () => ({ dispose: () => undefined }),
+                registerSignatureHelpProvider: () => ({ dispose: () => undefined }),
             },
             editor: {
                 OverlayWidgetPositionPreference: { BOTTOM_RIGHT_CORNER: 1 },
@@ -227,7 +269,7 @@ describe('frontend completion integration', () => {
         const windowMock: any = {
             UiContext: {
                 hydroBatterCodeEdit: {
-                    version: '1.1.0',
+                    version: '1.2.0',
                     enabled: true,
                     completion: true,
                     templates: true,
@@ -281,7 +323,10 @@ describe('frontend completion integration', () => {
         expect(event.preventDefault).toHaveBeenCalledOnce();
         expect(executeEdits).toHaveBeenCalledWith(
             'hydro-batter-tab-completion',
-            [expect.objectContaining({ text: 'queue' })],
+            [
+                expect.objectContaining({ text: 'queue' }),
+                expect.objectContaining({ text: '#include <queue>\n' }),
+            ],
         );
     });
 });

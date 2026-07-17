@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-    analyzeCompletionDocument, getIdeCompletionResult, IdeCompletionResult,
+    analyzeCompletionDocument, getIdeCompletionResult, getIdeSignatureHelp, IdeCompletionResult,
 } from '../src/completion-engine';
 
 function complete(language: string, codeWithCursor: string): IdeCompletionResult {
@@ -27,6 +27,7 @@ describe('IDE-like contextual completion engine', () => {
         const priorityQueue = complete('cpp', 'priority_queue<int> pending;\npending.to|');
         expect(item(priorityQueue, 'top')?.insertText).toBe('top()');
         expect(item(complete('cpp', 'auto values = vector<int>();\nvalues.rese|'), 'reserve')).toBeTruthy();
+        expect(item(complete('cpp', 'string value;\nvalue.substr(1).len|'), 'length')).toBeTruthy();
     });
 
     it('completes C++ includes, namespaces and functions declared in the file', () => {
@@ -44,6 +45,8 @@ describe('IDE-like contextual completion engine', () => {
             .toBe('append(${1:value})');
         expect(item(complete('python', 'lookup = {}\nlookup.ge|'), 'get')?.detail).toContain('lookup: dict');
         expect(item(complete('python', 'point = (2, 3)\npoint.co|'), 'count')).toBeTruthy();
+        expect(item(complete('python', 'items = []\nitems.copy().ap|'), 'append')).toBeTruthy();
+        expect(item(complete('python', 'values = [3, 1]\nsorted(values).ap|'), 'append')).toBeTruthy();
         expect(item(complete('python', 'import math\nmath.sq|'), 'sqrt')).toBeTruthy();
         expect(item(complete('python', 'from coll|'), 'collections.deque')).toBeTruthy();
     });
@@ -68,11 +71,32 @@ describe('IDE-like contextual completion engine', () => {
         const arrays = complete('java', 'Arrays.bi|');
         expect(item(arrays, 'binarySearch')?.detail).toContain('static int Arrays.binarySearch');
         expect(item(complete('java', 'int[] distance = new int[10];\ndistance.len|'), 'length')?.kind).toBe('field');
+        expect(item(complete('java', 'StringBuilder out = new StringBuilder();\nout.append("x").rev|'), 'reverse')).toBeTruthy();
     });
 
     it('completes Java imports and methods declared in the file', () => {
         expect(item(complete('java', 'import java.util.Arr|'), 'java.util.ArrayList')).toBeTruthy();
         const local = complete('java', 'static int solveCase(int left, int right) { return 0; }\nsol|');
         expect(item(local, 'solveCase')?.insertText).toBe('solveCase(${1:left}, ${2:right})');
+    });
+
+    it('provides active-parameter signature help for all enhanced languages', () => {
+        const cpp = 'vector<int> values;\nvalues.push_back(';
+        expect(getIdeSignatureHelp(analyzeCompletionDocument(cpp, 'cpp'), cpp, cpp.length)).toMatchObject({
+            activeParameter: 0,
+            signatures: [expect.objectContaining({ label: 'void push_back(const T& value)' })],
+        });
+
+        const python = 'def shortest_path(graph, start):\n    pass\nshortest_path(graph, ';
+        expect(getIdeSignatureHelp(analyzeCompletionDocument(python, 'python'), python, python.length)).toMatchObject({
+            activeParameter: 1,
+            signatures: [expect.objectContaining({ parameters: [{ label: 'graph' }, { label: 'start' }] })],
+        });
+
+        const java = 'Map<String, Integer> counts = new HashMap<>();\ncounts.getOrDefault(key, ';
+        expect(getIdeSignatureHelp(analyzeCompletionDocument(java, 'java'), java, java.length)).toMatchObject({
+            activeParameter: 1,
+            signatures: [expect.objectContaining({ label: 'V getOrDefault(Object key, V defaultValue)' })],
+        });
     });
 });
