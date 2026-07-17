@@ -21,4 +21,23 @@ describe('Hydro frontend bundle', () => {
         expect(javascript).not.toContain('await import("fs/promises")');
         expect(javascript).not.toContain('await import("module")');
     });
+
+    it('bundles the standalone playground page and its Monaco integration', async () => {
+        const result = await build({
+            entryPoints: [resolve('frontend/playground.page.ts')],
+            bundle: true,
+            format: 'iife',
+            platform: 'browser',
+            target: ['chrome65'],
+            outdir: 'dist-test',
+            write: false,
+            external: ['@hydrooj/ui-default'],
+            logLevel: 'silent',
+        });
+        const javascript = result.outputFiles?.find((file) => file.path.endsWith('.js'))?.text || '';
+        const css = result.outputFiles?.find((file) => file.path.endsWith('.css'))?.text || '';
+        expect(javascript).toContain('hydro-batter-code-edit:playground:v1');
+        expect(javascript).toContain('pagehide');
+        expect(css).toContain('.hydro-batter-playground__workspace');
+    });
 });

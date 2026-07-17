@@ -1,0 +1,83 @@
+{% extends "layout/basic.html" %}
+
+{% block content %}
+{{ set(UiContext, 'hydroBatterPlayground', playground) }}
+<main class="row hydro-batter-playground" id="hydro-batter-playground">
+  <header class="hydro-batter-playground__header">
+    <div>
+      <p class="hydro-batter-playground__eyebrow">Batter Playground</p>
+      <h1>{{ _('Online IDE') }}</h1>
+      <p>{{ _('Write, run and test a standalone program without creating a submission.') }}</p>
+    </div>
+    <div class="hydro-batter-playground__local-note">
+      <span class="icon icon-info"></span>
+      {{ _('There is no cloud save. The last closed state is kept only in this browser.') }}
+    </div>
+  </header>
+
+  <section class="hydro-batter-playground__toolbar" aria-label="{{ _('Editor toolbar') }}">
+    <label for="hydro-batter-playground-language">{{ _('Language') }}</label>
+    <select id="hydro-batter-playground-language" class="select"{% if not playground.languages.length %} disabled{% endif %}>
+      {% for language in playground.languages %}
+        <option value="{{ language.key }}">{{ language.display }}</option>
+      {% endfor %}
+    </select>
+    <span class="hydro-batter-playground__limits">
+      {{ playground.timeLimitSeconds }}s · {{ playground.memoryLimitMb }}MiB
+    </span>
+    <span class="hydro-batter-playground__toolbar-spacer"></span>
+    <button type="button" class="button" id="hydro-batter-playground-template"{% if not playground.languages.length %} disabled{% endif %}>
+      <span class="icon icon-refresh"></span> {{ _('Reset to template') }}
+    </button>
+    <button type="button" class="button" id="hydro-batter-playground-format"{% if not playground.languages.length %} disabled{% endif %}>
+      <span class="icon icon-edit"></span> {{ _('Format code') }}
+    </button>
+    <button type="button" class="primary rounded button" id="hydro-batter-playground-run"{% if not playground.languages.length %} disabled{% endif %}>
+      <span class="icon icon-send"></span>
+      <span data-run-label>{{ _('Run code') }}</span>
+      <kbd>Ctrl ↵</kbd>
+    </button>
+  </section>
+
+  {% if playground.languages.length %}
+  <div class="hydro-batter-playground__workspace">
+    <section class="hydro-batter-playground__editor-panel" aria-labelledby="hydro-batter-playground-source-title">
+      <div class="hydro-batter-playground__panel-title" id="hydro-batter-playground-source-title">
+        <span>{{ _('Source code') }}</span>
+        <span class="hydro-batter-playground__file" data-file-name>Main.cc</span>
+      </div>
+      <div id="hydro-batter-playground-editor" class="hydro-batter-playground__editor" aria-label="{{ _('Source code editor') }}">
+        <div class="loader-container"><div class="loader"></div></div>
+      </div>
+    </section>
+
+    <aside class="hydro-batter-playground__io">
+      <section class="hydro-batter-playground__panel hydro-batter-playground__input-panel">
+        <label class="hydro-batter-playground__panel-title" for="hydro-batter-playground-input">
+          <span>{{ _('Standard input') }}</span>
+          <span data-input-size>0 B</span>
+        </label>
+        <textarea id="hydro-batter-playground-input" spellcheck="false" autocomplete="off"
+          placeholder="{{ _('Enter the data passed to standard input') }}"></textarea>
+      </section>
+      <section class="hydro-batter-playground__panel hydro-batter-playground__output-panel">
+        <div class="hydro-batter-playground__panel-title">
+          <span>{{ _('Program output') }}</span>
+          <span class="hydro-batter-playground__run-meta" data-run-meta></span>
+        </div>
+        <div class="hydro-batter-playground__output-status" data-output-status data-state="idle">
+          {{ _('Ready to run') }}
+        </div>
+        <pre id="hydro-batter-playground-output" tabindex="0" aria-live="polite">{{ _('Run the program to see its output here.') }}</pre>
+      </section>
+    </aside>
+  </div>
+  {% else %}
+    <div class="hydro-batter-playground__empty">
+      <span class="icon icon-warning"></span>
+      <h2>{{ _('No runnable language is configured') }}</h2>
+      <p>{{ _('Enable a C++, Python 3 or Java language in the Hydro language settings and connect HydroJudge.') }}</p>
+    </div>
+  {% endif %}
+</main>
+{% endblock %}

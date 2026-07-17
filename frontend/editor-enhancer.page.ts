@@ -24,7 +24,7 @@ import {
   getLspClient, getLspEngineStatus, LspDocumentClient, prepareLspModel,
 } from './lsp-client';
 
-const PLUGIN_VERSION = '1.3.4';
+const PLUGIN_VERSION = '1.4.0-pre.1';
 const MARKER_OWNER = 'hydro-batter-code-edit';
 const supportedLanguages = new Set(getSupportedLanguages());
 const sessions = new Set<EditorSession>();
@@ -445,6 +445,10 @@ function getDraftContext(language: string): DraftContext {
   };
 }
 
+function isPlaygroundModel(model: Monaco.editor.ITextModel | null): boolean {
+  return model?.uri?.scheme === 'hydro-batter-playground';
+}
+
 function markerSeverity(monaco: typeof Monaco, severity: string): Monaco.MarkerSeverity {
   if (severity === 'error') return monaco.MarkerSeverity.Error;
   if (severity === 'warning') return monaco.MarkerSeverity.Warning;
@@ -581,6 +585,7 @@ class EditorSession {
   }
 
   private installActions() {
+    const allowDraftActions = !isPlaygroundModel(this.editor.getModel());
     if (!(this.editor as any)._standaloneKeybindingService) {
       this.installFallbackActionKeyHandler();
       return;
@@ -605,7 +610,7 @@ class EditorSession {
         run: () => this.formatDocument(),
       }));
     }
-    if (config.autosave) {
+    if (config.autosave && allowDraftActions) {
       this.disposables.push(
         this.editor.addAction({
           id: 'hydro-batter.save-draft',
@@ -666,6 +671,7 @@ class EditorSession {
         return;
       }
       if (config.autosave
+        && !isPlaygroundModel(this.editor.getModel())
         && primaryModifier
         && !event.altKey
         && !event.shiftKey
@@ -835,7 +841,7 @@ class EditorSession {
   }
 
   private scheduleAutosave() {
-    if (!config.autosave) return;
+    if (!config.autosave || isPlaygroundModel(this.editor.getModel())) return;
     clearTimeout(this.autosaveTimer);
     const diagnosticCount = this.lastDiagnosticCount + (this.lspClient?.diagnosticCount || 0);
     this.statusNode.textContent = diagnosticCount
@@ -874,7 +880,7 @@ class EditorSession {
   private restoreDraft(force: boolean) {
     if (!config.autosave) return;
     const model = this.editor.getModel();
-    if (!model) return;
+    if (!model || isPlaygroundModel(model)) return;
     const draft = readDraft(localStorage, getDraftContext(model.getLanguageId()));
     if (!draft || !draft.code) {
       if (force) Notification.info(i18n('No local draft was found'));
@@ -890,7 +896,7 @@ class EditorSession {
     if (!config.autosave || this.disposed) return;
     try {
       const model = this.editor.getModel();
-      if (!model || model.isDisposed() || !model.getValue().trim()) return;
+      if (!model || model.isDisposed() || isPlaygroundModel(model) || !model.getValue().trim()) return;
       writeDraft(
         localStorage,
         getDraftContext(model.getLanguageId()),
@@ -914,7 +920,7 @@ class EditorSession {
       }
       if (this.lspClient?.state === 'ready') parts.push(i18n('Language server ready'));
     }
-    if (config.autosave) {
+    if (config.autosave && !isPlaygroundModel(model)) {
       const draft = readDraft(localStorage, getDraftContext(model.getLanguageId()));
       if (draft) parts.push(i18n('Draft saved at {0}', new Date(draft.updatedAt).toLocaleTimeString([], {
         hour: '2-digit',

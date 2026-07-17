@@ -295,7 +295,7 @@ export class LspDocumentClient {
     this.setState('initializing');
     const result = await this.rawRequest('initialize', {
       processId: null,
-      clientInfo: { name: 'Hydro Batter Code Edit', version: '1.3.4' },
+      clientInfo: { name: 'Hydro Batter Code Edit', version: '1.4.0-pre.1' },
       locale: document.documentElement.lang || 'zh-CN',
       rootUri: this.rootUri,
       workspaceFolders: [{ uri: this.rootUri, name: 'HydroOJ submission' }],
