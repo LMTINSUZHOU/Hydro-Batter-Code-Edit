@@ -20,8 +20,11 @@ import { BatterEditorConfig, DEFAULT_EDITOR_CONFIG } from '../types';
 import {
   getReadySyntaxFacts, getSyntaxEngineStatus, prepareSyntaxModel,
 } from './tree-sitter-service';
+import {
+  getLspClient, getLspEngineStatus, LspDocumentClient, prepareLspModel,
+} from './lsp-client';
 
-const PLUGIN_VERSION = '1.2.0';
+const PLUGIN_VERSION = '1.3.0';
 const MARKER_OWNER = 'hydro-batter-code-edit';
 const supportedLanguages = new Set(getSupportedLanguages());
 const sessions = new Set<EditorSession>();
@@ -29,6 +32,7 @@ const attachedEditors = new WeakMap<Monaco.editor.IStandaloneCodeEditor, EditorS
 const completionProviderLanguages = new Set<string>();
 const signatureProviderLanguages = new Set<string>();
 const formattingProviderLanguages = new Set<string>();
+const hoverProviderLanguages = new Set<string>();
 const languageBindings = new Map<string, string>();
 const completionAnalysisCache = new WeakMap<Monaco.editor.ITextModel, {
   language: string;
@@ -50,6 +54,7 @@ interface RuntimeStatus {
   editorCount: number;
   completionRequests: number;
   syntaxEngine: ReturnType<typeof getSyntaxEngineStatus>;
+  lspEngine: ReturnType<typeof getLspEngineStatus>;
   lastCompletion?: {
     language: string;
     prefix: string;
@@ -69,6 +74,7 @@ const runtimeStatus: RuntimeStatus = {
   editorCount: 0,
   completionRequests: 0,
   syntaxEngine: getSyntaxEngineStatus(),
+  lspEngine: getLspEngineStatus(),
 };
 (window as any).HydroBatterCodeEdit = runtimeStatus;
 
@@ -174,6 +180,104 @@ function completionRange(
   };
 }
 
+function fallbackCompletionItems(
+  monaco: typeof Monaco,
+  model: Monaco.editor.ITextModel,
+  position: Monaco.Position,
+  catalogLanguage: string,
+): Monaco.languages.CompletionItem[] {
+  const language = catalogLanguageFor(model.getLanguageId()) || catalogLanguage;
+  const code = model.getValue();
+  const offset = model.getOffsetAt(position);
+  const ideCompletion = getIdeCompletionResult(getCompletionAnalysis(model, language), code, offset);
+  const word = model.getWordUntilPosition(position);
+  const range = {
+    startLineNumber: position.lineNumber,
+    endLineNumber: position.lineNumber,
+    startColumn: word.startColumn,
+    endColumn: word.endColumn,
+  };
+  const prefix = ideCompletion.prefix || model.getValueInRange(range);
+  const query = prefix.toLowerCase();
+  const snippets = ideCompletion.exclusive ? [] : getCompletionSnippets(language).filter((snippet) => !query
+    || snippet.prefix.toLowerCase().startsWith(query)
+    || snippet.label.toLowerCase().startsWith(query));
+  const semanticLabels = new Set(ideCompletion.items.map((item) => item.label));
+  const symbols = ideCompletion.exclusive ? [] : getCompletionSymbols(language, prefix)
+    .filter((symbol) => !semanticLabels.has(symbol.label));
+  runtimeStatus.completionRequests += 1;
+  runtimeStatus.lastCompletion = {
+    language: model.getLanguageId(),
+    prefix,
+    count: ideCompletion.items.length + snippets.length + symbols.length,
+    context: ideCompletion.context,
+  };
+  const symbolKinds: Record<CompletionSymbolKind, Monaco.languages.CompletionItemKind> = {
+    keyword: monaco.languages.CompletionItemKind.Keyword,
+    class: monaco.languages.CompletionItemKind.Class,
+    function: monaco.languages.CompletionItemKind.Function,
+    constant: monaco.languages.CompletionItemKind.Constant,
+    module: monaco.languages.CompletionItemKind.Module,
+    property: monaco.languages.CompletionItemKind.Property,
+  };
+  const ideKinds: Record<IdeCompletionKind, Monaco.languages.CompletionItemKind> = {
+    class: monaco.languages.CompletionItemKind.Class,
+    constant: monaco.languages.CompletionItemKind.Constant,
+    constructor: monaco.languages.CompletionItemKind.Constructor,
+    enum: monaco.languages.CompletionItemKind.Enum,
+    field: monaco.languages.CompletionItemKind.Field,
+    function: monaco.languages.CompletionItemKind.Function,
+    interface: monaco.languages.CompletionItemKind.Interface,
+    method: monaco.languages.CompletionItemKind.Method,
+    module: monaco.languages.CompletionItemKind.Module,
+    property: monaco.languages.CompletionItemKind.Property,
+    variable: monaco.languages.CompletionItemKind.Variable,
+  };
+  return [
+    ...ideCompletion.items.map((item, index) => {
+      const autoImport = item.autoImport ? getAutoImportEdit(code, language, item.label) : undefined;
+      return {
+        label: item.label,
+        detail: autoImport ? `${item.detail} · ${autoImport.description}` : item.detail,
+        documentation: item.documentation || item.detail,
+        filterText: item.filterText || item.label,
+        insertText: item.insertText,
+        insertTextRules: item.snippet ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
+        kind: ideKinds[item.kind],
+        preselect: index === 0,
+        range: item.replacement ? completionRange(model, item.replacement) : range,
+        sortText: `10${item.sortText}`,
+        additionalTextEdits: autoImport ? [{ range: completionRange(model, autoImport), text: autoImport.text }] : undefined,
+      };
+    }),
+    ...snippets.map((snippet, index) => ({
+      label: snippet.label,
+      detail: snippet.detail,
+      documentation: snippet.detail,
+      filterText: `${snippet.prefix} ${snippet.label}`,
+      insertText: snippet.body,
+      insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+      kind: monaco.languages.CompletionItemKind.Snippet,
+      range,
+      sortText: `20${index.toString().padStart(2, '0')}`,
+    })),
+    ...symbols.map((symbol) => {
+      const autoImport = getAutoImportEdit(code, language, symbol.label);
+      return {
+        label: symbol.label,
+        detail: autoImport ? `${symbol.detail} · ${autoImport.description}` : symbol.detail,
+        documentation: symbol.detail,
+        filterText: symbol.label,
+        insertText: symbol.insertText || symbol.label,
+        kind: symbolKinds[symbol.kind],
+        range,
+        sortText: `30${symbol.label.toLowerCase()}`,
+        additionalTextEdits: autoImport ? [{ range: completionRange(model, autoImport), text: autoImport.text }] : undefined,
+      };
+    }),
+  ];
+}
+
 function ensureCompletionProvider(
   monaco: typeof Monaco,
   monacoLanguage: string,
@@ -183,124 +287,34 @@ function ensureCompletionProvider(
   completionProviderLanguages.add(monacoLanguage);
   try {
     providerDisposables.push(monaco.languages.registerCompletionItemProvider(monacoLanguage, {
-      provideCompletionItems(model, position) {
+      async provideCompletionItems(model, position, context) {
         const language = catalogLanguageFor(model.getLanguageId()) || catalogLanguage;
         void prepareSyntaxModel(model, language).then(() => {
           runtimeStatus.syntaxEngine = getSyntaxEngineStatus();
         });
-        const code = model.getValue();
-        const offset = model.getOffsetAt(position);
-        const ideCompletion = getIdeCompletionResult(
-          getCompletionAnalysis(model, language),
-          code,
-          offset,
-        );
-        const word = model.getWordUntilPosition(position);
-        const range = {
-          startLineNumber: position.lineNumber,
-          endLineNumber: position.lineNumber,
-          startColumn: word.startColumn,
-          endColumn: word.endColumn,
-        };
-        const prefix = ideCompletion.prefix || model.getValueInRange(range);
-        const query = prefix.toLowerCase();
-        const snippets = ideCompletion.exclusive ? [] : getCompletionSnippets(language).filter((snippet) => !query
-          || snippet.prefix.toLowerCase().startsWith(query)
-          || snippet.label.toLowerCase().startsWith(query));
-        const semanticLabels = new Set(ideCompletion.items.map((item) => item.label));
-        const symbols = ideCompletion.exclusive ? [] : getCompletionSymbols(language, prefix)
-          .filter((symbol) => !semanticLabels.has(symbol.label));
-        runtimeStatus.completionRequests += 1;
-        runtimeStatus.lastCompletion = {
-          language: model.getLanguageId(),
-          prefix,
-          count: ideCompletion.items.length + snippets.length + symbols.length,
-          context: ideCompletion.context,
-        };
-        const symbolKinds: Record<CompletionSymbolKind, Monaco.languages.CompletionItemKind> = {
-          keyword: monaco.languages.CompletionItemKind.Keyword,
-          class: monaco.languages.CompletionItemKind.Class,
-          function: monaco.languages.CompletionItemKind.Function,
-          constant: monaco.languages.CompletionItemKind.Constant,
-          module: monaco.languages.CompletionItemKind.Module,
-          property: monaco.languages.CompletionItemKind.Property,
-        };
-        const ideKinds: Record<IdeCompletionKind, Monaco.languages.CompletionItemKind> = {
-          class: monaco.languages.CompletionItemKind.Class,
-          constant: monaco.languages.CompletionItemKind.Constant,
-          constructor: monaco.languages.CompletionItemKind.Constructor,
-          enum: monaco.languages.CompletionItemKind.Enum,
-          field: monaco.languages.CompletionItemKind.Field,
-          function: monaco.languages.CompletionItemKind.Function,
-          interface: monaco.languages.CompletionItemKind.Interface,
-          method: monaco.languages.CompletionItemKind.Method,
-          module: monaco.languages.CompletionItemKind.Module,
-          property: monaco.languages.CompletionItemKind.Property,
-          variable: monaco.languages.CompletionItemKind.Variable,
-        };
+        const fallback = fallbackCompletionItems(monaco, model, position, catalogLanguage);
+        const lsp = getLspClient(model);
+        if (!lsp) return { suggestions: fallback };
         const seen = new Set<string>();
-        const unique = <T extends { label: string; insertText: string }>(items: T[]) => items.filter((item) => {
-          const key = `${item.label}:${item.insertText}`;
+        const unique = (items: Monaco.languages.CompletionItem[]) => items.filter((item) => {
+          const label = typeof item.label === 'string' ? item.label : item.label.label;
+          const key = `${label}:${item.insertText}`;
           if (seen.has(key)) return false;
           seen.add(key);
           return true;
         });
-        return {
-          suggestions: unique([
-            ...ideCompletion.items.map((item, index) => {
-              const autoImport = item.autoImport ? getAutoImportEdit(code, language, item.label) : undefined;
-              return {
-                label: item.label,
-                detail: autoImport ? `${item.detail} · ${autoImport.description}` : item.detail,
-                documentation: item.documentation || item.detail,
-                filterText: item.filterText || item.label,
-                insertText: item.insertText,
-                insertTextRules: item.snippet
-                  ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
-                  : undefined,
-                kind: ideKinds[item.kind],
-                preselect: index === 0,
-                range: item.replacement ? completionRange(model, item.replacement) : range,
-                sortText: item.sortText,
-                additionalTextEdits: autoImport ? [{
-                  range: completionRange(model, autoImport),
-                  text: autoImport.text,
-                }] : undefined,
-              };
-            }),
-            ...snippets.map((snippet, index) => ({
-              label: snippet.label,
-              detail: snippet.detail,
-              documentation: snippet.detail,
-              filterText: `${snippet.prefix} ${snippet.label}`,
-              insertText: snippet.body,
-              insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-              kind: monaco.languages.CompletionItemKind.Snippet,
-              range,
-              sortText: `10${index.toString().padStart(2, '0')}`,
-            })),
-            ...symbols.map((symbol, index) => {
-              const autoImport = getAutoImportEdit(code, language, symbol.label);
-              return {
-                label: symbol.label,
-                detail: autoImport ? `${symbol.detail} · ${autoImport.description}` : symbol.detail,
-                documentation: symbol.detail,
-                filterText: symbol.label,
-                insertText: symbol.insertText || symbol.label,
-                kind: symbolKinds[symbol.kind],
-                preselect: index === 0,
-                range,
-                sortText: `20${symbol.label.toLowerCase()}`,
-                additionalTextEdits: autoImport ? [{
-                  range: completionRange(model, autoImport),
-                  text: autoImport.text,
-                }] : undefined,
-              };
-            }),
-          ]),
-        };
+        try {
+          const advanced = await lsp.completionItems(position, context);
+          return { suggestions: unique([...advanced, ...fallback]) };
+        } catch {
+          return { suggestions: fallback };
+        }
       },
-      triggerCharacters: ['.', ':', '>', '#', '<'],
+      resolveCompletionItem(item) {
+        const client = (item as any).__hydroBatterLsp?.client as LspDocumentClient | undefined;
+        return client?.resolveCompletionItem(item) || item;
+      },
+      triggerCharacters: ['.', ':', '>', '#', '<', '"', '/', '@'],
     }));
   } catch (error) {
     completionProviderLanguages.delete(monacoLanguage);
@@ -320,11 +334,18 @@ function ensureSignatureProvider(
     providerDisposables.push(monaco.languages.registerSignatureHelpProvider(monacoLanguage, {
       signatureHelpTriggerCharacters: ['(', ','],
       signatureHelpRetriggerCharacters: [','],
-      provideSignatureHelp(model, position) {
+      async provideSignatureHelp(model, position, _token, context) {
         const language = catalogLanguageFor(model.getLanguageId()) || catalogLanguage;
         void prepareSyntaxModel(model, language).then(() => {
           runtimeStatus.syntaxEngine = getSyntaxEngineStatus();
         });
+        const lsp = getLspClient(model);
+        if (lsp) {
+          try {
+            const result = await lsp.signatureHelp(position, context);
+            if (result) return result;
+          } catch { /* Fall through to browser analysis. */ }
+        }
         const signature = getIdeSignatureHelp(
           getCompletionAnalysis(model, language),
           model.getValue(),
@@ -359,10 +380,35 @@ function ensureFormattingProvider(
     || formattingProviderLanguages.has(monacoLanguage)) return;
   formattingProviderLanguages.add(monacoLanguage);
   providerDisposables.push(monaco.languages.registerDocumentFormattingEditProvider(monacoLanguage, {
-    provideDocumentFormattingEdits(model, options) {
+    async provideDocumentFormattingEdits(model, options) {
+      const lsp = getLspClient(model);
+      if (lsp) {
+        try {
+          const edits = await lsp.formatting(options);
+          if (edits.length) return edits;
+        } catch { /* Fall through to conservative browser formatting. */ }
+      }
       const formatted = formatCode(model.getValue(), catalogLanguage, options.tabSize);
       if (formatted === model.getValue()) return [];
       return [{ range: model.getFullModelRange(), text: formatted }];
+    },
+  }));
+}
+
+function ensureHoverProvider(monaco: typeof Monaco, monacoLanguage: string) {
+  if (!config.lspEnabled
+    || hoverProviderLanguages.has(monacoLanguage)
+    || typeof monaco.languages.registerHoverProvider !== 'function') return;
+  hoverProviderLanguages.add(monacoLanguage);
+  providerDisposables.push(monaco.languages.registerHoverProvider(monacoLanguage, {
+    async provideHover(model, position) {
+      const lsp = getLspClient(model);
+      if (!lsp) return null;
+      try {
+        return await lsp.hover(position);
+      } catch {
+        return null;
+      }
     },
   }));
 }
@@ -374,6 +420,7 @@ function ensureLanguageProviders(monaco: typeof Monaco, monacoLanguage: string, 
   ensureCompletionProvider(monaco, monacoLanguage, language);
   ensureSignatureProvider(monaco, monacoLanguage, language);
   ensureFormattingProvider(monaco, monacoLanguage, language);
+  ensureHoverProvider(monaco, monacoLanguage);
 }
 
 function registerProviders(monaco: typeof Monaco) {
@@ -498,6 +545,7 @@ class EditorSession {
   private diagnosticsTimer?: ReturnType<typeof setTimeout>;
   private restoreTimer?: ReturnType<typeof setTimeout>;
   private completionOptionsTimer?: ReturnType<typeof setTimeout>;
+  private lspClient?: LspDocumentClient;
   private lastDiagnosticCount = 0;
   private statusNode = document.createElement('div');
   private statusWidget: Monaco.editor.IOverlayWidget;
@@ -524,6 +572,11 @@ class EditorSession {
       this.editor.onDidChangeConfiguration(() => this.scheduleCompletionOptions()),
       this.editor.onDidDispose(() => this.dispose()),
     );
+    if (typeof this.monaco.editor.onDidChangeModelLanguage === 'function') {
+      this.disposables.push(this.monaco.editor.onDidChangeModelLanguage((event) => {
+        if (event.model === this.editor.getModel()) this.bindModel();
+      }));
+    }
     this.bindModel();
   }
 
@@ -741,6 +794,8 @@ class EditorSession {
   }
 
   private bindModel() {
+    this.lspClient?.dispose();
+    this.lspClient = undefined;
     this.modelDisposables.forEach((item) => item.dispose());
     this.modelDisposables = [];
     clearTimeout(this.autosaveTimer);
@@ -759,6 +814,11 @@ class EditorSession {
       runtimeStatus.syntaxEngine = getSyntaxEngineStatus();
       this.updateStatus();
     });
+    this.lspClient = prepareLspModel(model, language, this.monaco, () => {
+      runtimeStatus.lspEngine = getLspEngineStatus();
+      this.updateStatus();
+    });
+    runtimeStatus.lspEngine = getLspEngineStatus();
     this.statusNode.style.display = '';
     this.applyCompletionOptions();
     this.modelDisposables.push(model.onDidChangeContent(() => {
@@ -777,8 +837,9 @@ class EditorSession {
   private scheduleAutosave() {
     if (!config.autosave) return;
     clearTimeout(this.autosaveTimer);
-    this.statusNode.textContent = this.lastDiagnosticCount
-      ? i18n('{0} diagnostics', this.lastDiagnosticCount)
+    const diagnosticCount = this.lastDiagnosticCount + (this.lspClient?.diagnosticCount || 0);
+    this.statusNode.textContent = diagnosticCount
+      ? i18n('{0} diagnostics', diagnosticCount)
       : '●';
     this.autosaveTimer = setTimeout(() => this.saveNow(), config.autosaveDelay);
   }
@@ -851,6 +912,7 @@ class EditorSession {
       if (runtimeStatus.syntaxEngine.readyLanguages.includes(catalogLanguageFor(model.getLanguageId()))) {
         parts.push(i18n('Syntax analysis ready'));
       }
+      if (this.lspClient?.state === 'ready') parts.push(i18n('Language server ready'));
     }
     if (config.autosave) {
       const draft = readDraft(localStorage, getDraftContext(model.getLanguageId()));
@@ -859,9 +921,10 @@ class EditorSession {
         minute: '2-digit',
       })));
     }
-    if (this.lastDiagnosticCount) parts.push(i18n('{0} diagnostics', this.lastDiagnosticCount));
+    const diagnosticCount = this.lastDiagnosticCount + (this.lspClient?.diagnosticCount || 0);
+    if (diagnosticCount) parts.push(i18n('{0} diagnostics', diagnosticCount));
     this.statusNode.textContent = parts.join(' · ');
-    this.statusNode.dataset.level = this.lastDiagnosticCount ? 'warning' : 'normal';
+    this.statusNode.dataset.level = diagnosticCount ? 'warning' : 'normal';
   }
 
   dispose() {
@@ -872,6 +935,8 @@ class EditorSession {
     clearTimeout(this.diagnosticsTimer);
     clearTimeout(this.restoreTimer);
     clearTimeout(this.completionOptionsTimer);
+    this.lspClient?.dispose();
+    this.lspClient = undefined;
     try {
       const model = this.editor.getModel();
       if (model && !model.isDisposed()) this.monaco.editor.setModelMarkers(model, MARKER_OWNER, []);

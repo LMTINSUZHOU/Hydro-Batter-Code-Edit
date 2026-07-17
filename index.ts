@@ -1,14 +1,25 @@
 import {
-    Context, Handler, NotFoundError, param, Schema, SystemModel, Types, UiContextBase,
+    Context, Handler, NotFoundError, param, PRIV, Schema, SystemModel, Types, UiContextBase,
 } from 'hydrooj';
 import { readFileSync } from 'node:fs';
 import { BatterEditorConfig, DEFAULT_EDITOR_CONFIG } from './types';
 import { treeSitterBrowserEsbuildPlugin } from './src/tree-sitter-esbuild';
+import {
+    getAvailableLspLanguages, LspConnectionHandler,
+} from './src/lsp-gateway';
 
 declare module 'hydrooj' {
     interface SystemKeys {
         'hydro-batter-code-edit.enabled': boolean;
         'hydro-batter-code-edit.completion': boolean;
+        'hydro-batter-code-edit.lspEnabled': boolean;
+        'hydro-batter-code-edit.lspClangdCommand': string;
+        'hydro-batter-code-edit.lspPyrightCommand': string;
+        'hydro-batter-code-edit.lspJdtlsCommand': string;
+        'hydro-batter-code-edit.lspMaxSessions': number;
+        'hydro-batter-code-edit.lspMaxSessionsPerUser': number;
+        'hydro-batter-code-edit.lspMaxDocumentBytes': number;
+        'hydro-batter-code-edit.lspIdleTimeout': number;
         'hydro-batter-code-edit.templates': boolean;
         'hydro-batter-code-edit.formatting': boolean;
         'hydro-batter-code-edit.diagnostics': boolean;
@@ -19,12 +30,12 @@ declare module 'hydrooj' {
     }
 
     interface UiContextBase {
-        hydroBatterCodeEdit?: BatterEditorConfig & { version: string };
+        hydroBatterCodeEdit?: BatterEditorConfig & { version: string; lspLanguages: string[] };
     }
 }
 
 export const name = 'hydro-batter-code-edit';
-export const version = '1.2.0';
+export const version = '1.3.0';
 
 const TREE_SITTER_ASSETS: Record<string, string> = {
     'web-tree-sitter.wasm': require.resolve('web-tree-sitter/web-tree-sitter.wasm'),
@@ -52,6 +63,22 @@ const settingSchema = Schema.object({
             .description('Enable Monaco editor enhancements'),
         completion: Schema.boolean().default(DEFAULT_EDITOR_CONFIG.completion)
             .description('Enable competitive-programming completions'),
+        lspEnabled: Schema.boolean().default(DEFAULT_EDITOR_CONFIG.lspEnabled)
+            .description('Enable clangd, Pyright and JDT language servers'),
+        lspClangdCommand: Schema.string().default('clangd')
+            .description('clangd executable path or command name'),
+        lspPyrightCommand: Schema.string().default('bundled')
+            .description('Pyright executable path, command name, or bundled'),
+        lspJdtlsCommand: Schema.string().default('jdtls')
+            .description('JDT LS wrapper executable path or command name'),
+        lspMaxSessions: Schema.number().min(1).max(64).step(1).default(8)
+            .description('Maximum concurrent LSP sessions per Hydro process'),
+        lspMaxSessionsPerUser: Schema.number().min(1).max(8).step(1).default(2)
+            .description('Maximum concurrent LSP sessions per user'),
+        lspMaxDocumentBytes: Schema.number().min(16384).max(4194304).step(1024).default(524288)
+            .description('Maximum document size sent to a language server'),
+        lspIdleTimeout: Schema.number().min(30000).max(3600000).step(1000).default(300000)
+            .description('Idle LSP session timeout in milliseconds'),
         templates: Schema.boolean().default(DEFAULT_EDITOR_CONFIG.templates)
             .description('Enable code templates'),
         formatting: Schema.boolean().default(DEFAULT_EDITOR_CONFIG.formatting)
@@ -82,11 +109,13 @@ function getNumber(key: keyof import('hydrooj').SystemKeys, fallback: number): n
     return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
-function getPublicConfig(): BatterEditorConfig & { version: string } {
+function getPublicConfig(): BatterEditorConfig & { version: string; lspLanguages: string[] } {
     return {
         version,
         enabled: getBoolean('hydro-batter-code-edit.enabled', DEFAULT_EDITOR_CONFIG.enabled),
         completion: getBoolean('hydro-batter-code-edit.completion', DEFAULT_EDITOR_CONFIG.completion),
+        lspEnabled: getBoolean('hydro-batter-code-edit.lspEnabled', DEFAULT_EDITOR_CONFIG.lspEnabled),
+        lspLanguages: getAvailableLspLanguages(),
         templates: getBoolean('hydro-batter-code-edit.templates', DEFAULT_EDITOR_CONFIG.templates),
         formatting: getBoolean('hydro-batter-code-edit.formatting', DEFAULT_EDITOR_CONFIG.formatting),
         diagnostics: getBoolean('hydro-batter-code-edit.diagnostics', DEFAULT_EDITOR_CONFIG.diagnostics),
@@ -128,6 +157,7 @@ export function apply(ctx: Context) {
             'No template is available for this language': 'No template is available for this language',
             'Completion ready': 'Completion ready',
             'Syntax analysis ready': 'Syntax analysis ready',
+            'Language server ready': 'Language server ready',
             'Draft saved at {0}': 'Draft saved at {0}',
             '{0} diagnostics': '{0} diagnostics',
             Cancel: 'Cancel',
@@ -147,6 +177,7 @@ export function apply(ctx: Context) {
             'No template is available for this language': '该语言暂无可用模板',
             'Completion ready': '补全已就绪',
             'Syntax analysis ready': '语法分析已就绪',
+            'Language server ready': '语言服务器已就绪',
             'Draft saved at {0}': '草稿已于 {0} 保存',
             '{0} diagnostics': '{0} 个诊断',
             Cancel: '取消',
@@ -160,6 +191,12 @@ export function apply(ctx: Context) {
         '/hydro-batter-code-edit/wasm/:name',
         TreeSitterAssetHandler,
     );
+    ctx.Connection(
+        'hydro_batter_code_edit_lsp',
+        '/hydro-batter-code-edit/lsp/:language',
+        LspConnectionHandler,
+        PRIV.PRIV_USER_PROFILE,
+    );
 
     ctx.effect(() => {
         Object.defineProperty(UiContextBase, 'hydroBatterCodeEdit', {
@@ -169,7 +206,7 @@ export function apply(ctx: Context) {
         });
         return () => {
             delete (UiContextBase as UiContextBase & {
-                hydroBatterCodeEdit?: BatterEditorConfig & { version: string };
+                hydroBatterCodeEdit?: BatterEditorConfig & { version: string; lspLanguages: string[] };
             }).hydroBatterCodeEdit;
         };
     });

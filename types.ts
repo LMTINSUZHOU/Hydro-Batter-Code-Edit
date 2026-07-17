@@ -1,6 +1,7 @@
 export interface BatterEditorConfig {
     enabled: boolean;
     completion: boolean;
+    lspEnabled: boolean;
     templates: boolean;
     formatting: boolean;
     diagnostics: boolean;
@@ -13,6 +14,7 @@ export interface BatterEditorConfig {
 export const DEFAULT_EDITOR_CONFIG: BatterEditorConfig = {
     enabled: true,
     completion: true,
+    lspEnabled: true,
     templates: true,
     formatting: true,
     diagnostics: true,

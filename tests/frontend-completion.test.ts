@@ -59,7 +59,7 @@ describe('frontend completion integration', () => {
         const windowMock: any = {
             UiContext: {
                 hydroBatterCodeEdit: {
-                    version: '1.2.0',
+                    version: '1.3.0',
                     enabled: true,
                     completion: true,
                     templates: false,
@@ -103,8 +103,8 @@ describe('frontend completion integration', () => {
         expect(providers.has('java')).toBe(true);
         expect(signatureProviders.has('c_cpp')).toBe(true);
         expect(windowMock.HydroBatterCodeEdit).toMatchObject({
-            version: '1.2.0',
-            serverVersion: '1.2.0',
+            version: '1.3.0',
+            serverVersion: '1.3.0',
             loaded: true,
             pageName: 'site_specific_problem_page',
             completionEnabled: true,
@@ -112,7 +112,7 @@ describe('frontend completion integration', () => {
         expect(createEditor).not.toHaveBeenCalled();
         expect(codeTextarea).toEqual({ hidden: false, dataset: {}, value: 'int main() {}' });
 
-        const result = providers.get('c_cpp').provideCompletionItems({
+        const result = await providers.get('c_cpp').provideCompletionItems({
             getLanguageId: () => 'c_cpp',
             getOffsetAt: () => 2,
             getPositionAt: (offset: number) => ({ lineNumber: 1, column: offset + 1 }),
@@ -146,7 +146,7 @@ describe('frontend completion integration', () => {
             const lines = before.split('\n');
             return { lineNumber: lines.length, column: lines.at(-1)!.length + 1 };
         };
-        const memberResult = providers.get('c_cpp').provideCompletionItems({
+        const memberResult = await providers.get('c_cpp').provideCompletionItems({
             getLanguageId: () => 'c_cpp',
             getOffsetAt: () => memberCode.length,
             getPositionAt: positionAt,
@@ -158,7 +158,7 @@ describe('frontend completion integration', () => {
             getWordUntilPosition: () => ({ startColumn: 8, endColumn: 10 }),
             getValueInRange: () => 'pu',
         }, { lineNumber: 2, column: 10 });
-        expect(providers.get('c_cpp').triggerCharacters).toEqual(['.', ':', '>', '#', '<']);
+        expect(providers.get('c_cpp').triggerCharacters).toEqual(['.', ':', '>', '#', '<', '"', '/', '@']);
         expect(memberResult.suggestions).toEqual([
             expect.objectContaining({
                 label: 'push_back',
@@ -178,7 +178,7 @@ describe('frontend completion integration', () => {
         });
 
         const signatureCode = 'vector<int> values;\nvalues.push_back(';
-        const signatureResult = signatureProviders.get('c_cpp').provideSignatureHelp({
+        const signatureResult = await signatureProviders.get('c_cpp').provideSignatureHelp({
             getLanguageId: () => 'c_cpp',
             getOffsetAt: () => signatureCode.length,
             getPositionAt: positionAt,
@@ -269,7 +269,7 @@ describe('frontend completion integration', () => {
         const windowMock: any = {
             UiContext: {
                 hydroBatterCodeEdit: {
-                    version: '1.2.0',
+                    version: '1.3.0',
                     enabled: true,
                     completion: true,
                     templates: true,

@@ -1,7 +1,8 @@
 # Hydro Batter Code Edit
 
-这是一个面向 HydroOJ 默认 UI 的 Monaco 代码编辑器增强插件。它不需要额外部署语言服务器，在浏览器内提供：
+这是一个面向 HydroOJ 默认 UI 的 Monaco 代码编辑器增强插件。它可以通过 Hydro 后端接入 clangd、Pyright 和 Eclipse JDT Language Server，并在语言服务器未安装、启动失败或尚未就绪时自动回退到浏览器内的 Tree-sitter 引擎：
 
+- 真实 LSP 能力：C++ 使用 clangd、Python 使用 Pyright、Java 使用 JDT LS，按各服务器实际能力提供编译器级补全、参数提示、悬停文档、诊断和服务端格式化。
 - Tree-sitter 增量语义补全：重点增强 C++、Python、Java，理解作用域、当前文件的变量/函数/类、用户自定义成员、链式返回类型和标准容器；其他常用语言继续提供关键字、标准库符号和代码片段。
 - 自动导入与参数提示：接受候选时按需添加 C++ `#include`、Python/Java `import`，输入 `(` 或 `,` 时显示函数签名、重载和当前参数位置。
 - 代码模板：从命令面板、右键菜单或快捷键插入各语言的完整提交模板。
@@ -13,6 +14,12 @@
 ## 安装
 
 运行环境需要 Node.js 22+、HydroOJ 5.0+ 和 `@hydrooj/ui-default` 4.58+。
+
+Pyright 已作为 npm 依赖随插件安装。clangd 和 JDT LS 需要安装在 Hydro 服务器上：
+
+- clangd：按[官方安装说明](https://clangd.llvm.org/installation.html)安装，确保 `clangd --version` 可运行，或在插件设置中填写绝对路径；
+- JDT LS：按[官方说明](https://github.com/eclipse-jdtls/eclipse.jdt.ls#running-from-the-command-line-with-wrapper-script)准备 Java 21+ 和 `jdtls` wrapper，或在设置中填写 wrapper 的绝对路径；
+- 三个服务器都通过标准输入输出通信，不需要额外开放网络端口。
 
 ```bash
 git clone git@github.com:LMTINSUZHOU/Hydro-Batter-Code-Edit.git
@@ -32,7 +39,7 @@ hydrooj addon add "$(pwd)"
 
 在 C++ 的 `vector<int> values` 后输入 `values.pu`，会优先建议 `push_back(value)`；Python 的 `items.ap` 会得到 `append(value)`；Java 的 `Map` 变量输入 `.getO` 会得到 `getOrDefault(key, defaultValue)`。用户自定义方法的返回类型也会继续传播，例如 `graph.neighbors(1).ap` 可以根据 `neighbors` 的返回注解继续补全。插件也会补全 `#include <...>`、Python/Java 的 `import`、`std::`/`Arrays.`/`Math.` 等静态成员，以及当前文件中声明的函数与方法。函数候选使用 Monaco snippet，接受后可继续按 <kbd>Tab</kbd> 在参数占位之间移动。
 
-编辑器右下角显示 `Batter 1.2.0 · 补全已就绪 · 语法分析已就绪` 时，表示插件和当前语言的 Tree-sitter 已经挂载到 Monaco。插件会读取站点的 `LANGS` 配置，并兼容 `cpp`、`c_cpp`、`text/x-c++src`、`python3` 等常见 Monaco/主题语言别名。语法 WASM 按当前语言懒加载并由浏览器长期缓存；加载期间或加载失败时仍会使用原有轻量补全，不会阻塞编辑器。
+编辑器右下角显示 `Batter 1.3.0 · 补全已就绪 · 语法分析已就绪 · 语言服务器已就绪` 时，表示插件、Tree-sitter 和当前语言的 LSP 都已经挂载到 Monaco。插件会读取站点的 `LANGS` 配置，并兼容 `cpp`、`c_cpp`、`text/x-c++src`、`python3` 等常见别名。LSP 启动期间或连接失败时仍会使用 Tree-sitter 与静态目录补全，不会阻塞编辑器。
 
 | 操作 | 快捷键 |
 | --- | --- |
@@ -43,23 +50,25 @@ hydrooj addon add "$(pwd)"
 
 恢复和清除草稿也可以从 Monaco 右键菜单或命令面板执行。
 
-如果升级后仍显示旧版本，请重启 Hydro 服务并对题目页执行一次强制刷新。浏览器控制台中输入 `UiContext.hydroBatterCodeEdit` 可确认后端插件版本，输入 `window.HydroBatterCodeEdit` 可以查看前端版本、已注册语言、Tree-sitter 状态、编辑器数量、补全调用次数以及最近一次补全的上下文；两个对象中的版本都应为 `1.2.0`。
+如果升级后仍显示旧版本，请重启 Hydro 服务并对题目页执行一次强制刷新。浏览器控制台中输入 `UiContext.hydroBatterCodeEdit` 可确认后端插件版本和可用的 `lspLanguages`，输入 `window.HydroBatterCodeEdit` 可以查看前端版本、Tree-sitter/LSP 状态、编辑器数量和补全调用次数；两个对象中的版本都应为 `1.3.0`。
 
 ## 配置
 
 安装后可在“控制面板 → 系统设置 → Batter Code Editor”中调整：
 
 - 各项能力的总开关；
+- LSP 总开关，以及 clangd、Pyright、JDT LS 的可执行文件路径；
+- 全局/单用户最大 LSP 会话数、文档大小限制和空闲回收时间；
 - 自动保存和诊断的防抖时间；
 - 本地草稿保留天数；
 
-配置通过 `UiContext` 以只读形式传到浏览器，不提供修改系统状态的前端接口。草稿只保存在当前浏览器的 `localStorage`，不会上传到服务端。
+命令配置只在服务端读取，浏览器只能看到哪些语言服务器可用。草稿仍只保存在当前浏览器的 `localStorage`。
 
 ## 诊断边界
 
-插件诊断是即时、轻量的静态检查，不等同于编译器或语言服务器。它能提前发现常见输入错误，但最终语法、类型与运行结果仍以 Hydro 评测机为准。插件使用独立的 Monaco marker owner，不会覆盖 JavaScript/TypeScript 等语言已有的诊断。
+浏览器轻量诊断与真实 LSP 诊断使用不同的 Monaco marker owner，不会覆盖 Monaco 已有的诊断。clangd、Pyright、JDT LS 的结果比正则/Tree-sitter 推断准确，但编译参数、Python 环境和 Java classpath 仍可能与最终评测环境不同，运行结果以 Hydro 评测机为准。
 
-补全与 Tree-sitter 解析完全运行在浏览器中，服务端路由只提供静态 WASM 文件，不接收或分析用户代码，也不依赖 clangd、Pyright 或 JDT Language Server。它针对 OJ 常见的单文件代码、标准容器和标准库做作用域及类型推断；跨文件符号、复杂模板/泛型推导和编译器级准确性仍需要以后接入可选的语言服务器才能实现。
+启用 LSP 后，当前编辑器代码会通过同源、需登录的 WebSocket 发送到 Hydro 后端，并写入该连接专属的临时工作区；连接关闭后工作区会删除。每个会话使用独立语言服务器进程，网关限制方法、文档 URI、消息大小、全局/单用户并发数和空闲时间，并使用 `shell: false` 启动管理员配置的可执行文件。语言服务器仍与 Hydro 运行在同一主机权限边界内，公开部署建议让 Hydro 使用专用低权限系统账户或容器运行。若站点不能接受代码进入后端，可关闭 `lspEnabled`，插件将恢复为完全浏览器内的 Tree-sitter 模式。
 
 ## 开发与验证
 
@@ -69,7 +78,7 @@ npm test
 npm run check
 ```
 
-核心模板、格式化、诊断与草稿逻辑位于 `src/`，浏览器集成入口位于 `frontend/editor-enhancer.page.ts`，Hydro 后端设置和 `UiContext` 注入位于 `index.ts`。
+LSP stdio/WebSocket 网关位于 `src/lsp-gateway.ts`，浏览器 LSP 客户端位于 `frontend/lsp-client.ts`；Monaco 集成入口仍是 `frontend/editor-enhancer.page.ts`，Hydro 设置、资源和连接注册位于 `index.ts`。
 
 ## License
 
