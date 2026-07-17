@@ -24,7 +24,7 @@ import {
   getLspClient, getLspEngineStatus, LspDocumentClient, prepareLspModel,
 } from './lsp-client';
 
-const PLUGIN_VERSION = '1.3.1';
+const PLUGIN_VERSION = '1.3.2';
 const MARKER_OWNER = 'hydro-batter-code-edit';
 const supportedLanguages = new Set(getSupportedLanguages());
 const sessions = new Set<EditorSession>();

@@ -29,6 +29,8 @@ const FILE_NAMES: Record<LspLanguage, string> = {
     java: 'Main.java',
 };
 
+const LOCAL_RUNTIME_BIN = resolve(__dirname, '..', '.hydro-batter-runtime', 'bin');
+
 export function normalizeLspLanguage(language: string): LspLanguage | undefined {
     const normalized = normalizeLanguage(language);
     return ['cpp', 'python', 'java'].includes(normalized) ? normalized as LspLanguage : undefined;
@@ -83,9 +85,10 @@ function executableCandidates(command: string): string[] {
     const extensions = process.platform === 'win32' && !extname(command)
         ? (process.env.PATHEXT || '.EXE;.CMD;.BAT').split(';')
         : [''];
-    return (process.env.PATH || '').split(delimiter).flatMap((directory) => extensions.map((extension) => (
-        join(directory, process.platform === 'win32' ? `${command}${extension}` : command)
-    )));
+    return [LOCAL_RUNTIME_BIN, ...(process.env.PATH || '').split(delimiter)]
+        .flatMap((directory) => extensions.map((extension) => (
+            join(directory, process.platform === 'win32' ? `${command}${extension}` : command)
+        )));
 }
 
 export function resolveExecutable(command: string): string | undefined {

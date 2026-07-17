@@ -1,8 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { afterAll, describe, expect, it } from 'vitest';
 import {
     buildCppCompilationDatabase, buildLspLaunch, isLspLaunchAvailable, normalizeLspLanguage,
-    resolveCppCompiler,
+    resolveCppCompiler, resolveExecutable,
 } from '../src/lsp-launch';
+
+const localRuntime = resolve(__dirname, '..', '.hydro-batter-runtime');
+const localTestCommand = resolve(localRuntime, 'bin', 'hydro-batter-test-command');
+
+afterAll(async () => {
+    await rm(localTestCommand, { force: true });
+});
 
 const settings = {
     clangdCommand: 'clangd',
@@ -47,5 +56,12 @@ describe('language server launch configuration', () => {
 
     it('always detects the bundled Pyright language server', () => {
         expect(isLspLaunchAvailable('python', settings)).toBe(true);
+    });
+
+    it('finds plugin-local commands without relying on the PM2 PATH', async () => {
+        await mkdir(resolve(localRuntime, 'bin'), { recursive: true });
+        await writeFile(localTestCommand, '#!/bin/sh\nexit 0\n', 'utf8');
+        await chmod(localTestCommand, 0o755);
+        expect(resolveExecutable('hydro-batter-test-command')).toBe(localTestCommand);
     });
 });

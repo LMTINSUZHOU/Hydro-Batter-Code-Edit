@@ -1,4 +1,5 @@
 node_modules/
+.hydro-batter-runtime/
 coverage/
 dist/
 *.log
