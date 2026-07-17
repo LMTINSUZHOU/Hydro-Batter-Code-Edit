@@ -1,4 +1,6 @@
-import { accessSync, constants } from 'node:fs';
+import {
+    accessSync, constants, readdirSync,
+} from 'node:fs';
 import {
     delimiter, extname, isAbsolute, join, resolve, sep,
 } from 'node:path';
@@ -8,6 +10,7 @@ export type LspLanguage = 'cpp' | 'python' | 'java';
 
 export interface LspServerSettings {
     clangdCommand: string;
+    cppCompilerCommand: string;
     pyrightCommand: string;
     jdtlsCommand: string;
 }
@@ -17,6 +20,7 @@ export interface LspLaunch {
     args: string[];
     serverName: 'clangd' | 'Pyright' | 'JDT LS';
     fileName: string;
+    compilerCommand?: string;
 }
 
 const FILE_NAMES: Record<LspLanguage, string> = {
@@ -47,6 +51,7 @@ export function buildLspLaunch(
             args: ['--background-index=false'],
             serverName: 'clangd',
             fileName: FILE_NAMES.cpp,
+            compilerCommand: validateCommand(settings.cppCompilerCommand),
         };
     }
     if (language === 'python') {
@@ -83,6 +88,60 @@ function executableCandidates(command: string): string[] {
     )));
 }
 
+export function resolveExecutable(command: string): string | undefined {
+    return executableCandidates(validateCommand(command)).find((candidate) => {
+        try {
+            accessSync(candidate, constants.X_OK);
+            return true;
+        } catch {
+            return false;
+        }
+    });
+}
+
+function versionedGnuCompilers(): string[] {
+    const candidates: string[] = [];
+    const directories = new Set((process.env.PATH || '').split(delimiter));
+    if (process.platform === 'darwin') {
+        directories.add('/opt/homebrew/bin');
+        directories.add('/usr/local/bin');
+    }
+    for (const directory of directories) {
+        if (!directory) continue;
+        try {
+            for (const name of readdirSync(directory)) {
+                if (/^g\+\+-\d+(?:\.\d+)*$/.test(name)) candidates.push(join(directory, name));
+            }
+        } catch { /* Ignore unreadable PATH entries. */ }
+    }
+    return candidates.sort((left, right) => right.localeCompare(left, undefined, { numeric: true }));
+}
+
+export function resolveCppCompiler(command: string): string | undefined {
+    if (command.trim() !== 'auto') return resolveExecutable(command);
+    const environmentCompiler = process.env.CXX && !/\s/.test(process.env.CXX)
+        ? resolveExecutable(process.env.CXX)
+        : undefined;
+    if (environmentCompiler) return environmentCompiler;
+    const versioned = versionedGnuCompilers();
+    const commands = process.platform === 'darwin'
+        ? [...versioned, 'g++', 'c++', 'clang++']
+        : ['g++', ...versioned, 'c++', 'clang++'];
+    for (const candidate of commands) {
+        const executable = resolveExecutable(candidate);
+        if (executable) return executable;
+    }
+    return undefined;
+}
+
+export function buildCppCompilationDatabase(workspace: string, documentPath: string, compiler: string) {
+    return [{
+        directory: workspace,
+        file: documentPath,
+        arguments: [compiler, '-std=c++17', '-fsyntax-only', documentPath],
+    }];
+}
+
 export function isLspLaunchAvailable(language: LspLanguage, settings: LspServerSettings): boolean {
     let launch: LspLaunch;
     try {
@@ -91,12 +150,5 @@ export function isLspLaunchAvailable(language: LspLanguage, settings: LspServerS
         return false;
     }
     if (language === 'python' && settings.pyrightCommand.trim() === 'bundled') return true;
-    return executableCandidates(launch.command).some((candidate) => {
-        try {
-            accessSync(candidate, constants.X_OK);
-            return true;
-        } catch {
-            return false;
-        }
-    });
+    return Boolean(resolveExecutable(launch.command));
 }

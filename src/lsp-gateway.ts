@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
-    buildLspLaunch, isLspLaunchAvailable, LspLanguage, LspServerSettings, normalizeLspLanguage,
+    buildCppCompilationDatabase, buildLspLaunch, isLspLaunchAvailable, LspLanguage,
+    LspServerSettings, normalizeLspLanguage, resolveCppCompiler,
 } from './lsp-launch';
 import {
     applyLspContentChanges, encodeLspMessage, JsonRpcMessage, LspFrameDecoder,
@@ -24,6 +25,7 @@ interface LspGatewaySettings extends LspServerSettings {
 const DEFAULT_GATEWAY_SETTINGS: LspGatewaySettings = {
     enabled: true,
     clangdCommand: 'clangd',
+    cppCompilerCommand: 'auto',
     pyrightCommand: 'bundled',
     jdtlsCommand: 'jdtls',
     maxSessions: 8,
@@ -71,6 +73,7 @@ export function getLspGatewaySettings(): LspGatewaySettings {
     return {
         enabled: booleanSetting('hydro-batter-code-edit.lspEnabled', DEFAULT_GATEWAY_SETTINGS.enabled),
         clangdCommand: stringSetting('hydro-batter-code-edit.lspClangdCommand', DEFAULT_GATEWAY_SETTINGS.clangdCommand),
+        cppCompilerCommand: stringSetting('hydro-batter-code-edit.lspCppCompilerCommand', DEFAULT_GATEWAY_SETTINGS.cppCompilerCommand),
         pyrightCommand: stringSetting('hydro-batter-code-edit.lspPyrightCommand', DEFAULT_GATEWAY_SETTINGS.pyrightCommand),
         jdtlsCommand: stringSetting('hydro-batter-code-edit.lspJdtlsCommand', DEFAULT_GATEWAY_SETTINGS.jdtlsCommand),
         maxSessions: numberSetting('hydro-batter-code-edit.lspMaxSessions', DEFAULT_GATEWAY_SETTINGS.maxSessions),
@@ -138,6 +141,18 @@ export class LspConnectionHandler extends ConnectionHandler {
         const launch = buildLspLaunch(this.language, join(this.sessionRoot, 'server-data'), this.settings);
         this.documentPath = join(this.workspace, launch.fileName);
         await writeFile(this.documentPath, '', 'utf8');
+        let cppCompiler: string | undefined;
+        if (this.language === 'cpp' && launch.compilerCommand) {
+            cppCompiler = resolveCppCompiler(launch.compilerCommand);
+            if (cppCompiler) {
+                launch.args.push(`--query-driver=${cppCompiler}`);
+                await writeFile(
+                    join(this.workspace, 'compile_commands.json'),
+                    `${JSON.stringify(buildCppCompilationDatabase(this.workspace, this.documentPath, cppCompiler), null, 2)}\n`,
+                    'utf8',
+                );
+            }
+        }
         this.documentUri = pathToFileURL(this.documentPath).toString();
         this.rootUri = pathToFileURL(`${this.workspace}${sep}`).toString();
 
@@ -170,6 +185,7 @@ export class LspConnectionHandler extends ConnectionHandler {
         this.sendGateway('ready', {
             language: this.language,
             server: launch.serverName,
+            toolchain: cppCompiler,
             documentUri: this.documentUri,
             rootUri: this.rootUri,
         });

@@ -15,7 +15,15 @@
 
 运行环境需要 Node.js 22+、HydroOJ 5.0+ 和 `@hydrooj/ui-default` 4.58+。
 
-Pyright 已作为 npm 依赖随插件安装。clangd 和 JDT LS 需要安装在 Hydro 服务器上：
+推荐在 Hydro 服务器的插件目录中运行安装脚本。它会使用当前系统的 `apt`、`dnf`、`pacman`、`apk` 或 Homebrew 安装 clangd、GNU C++、Java 21 和必要工具，从 Eclipse 官方里程碑包安装 JDT LS，安装 npm 依赖，最后真实编译并让 clangd 检查一段包含 `bits/stdc++.h` 的程序：
+
+```bash
+./install.sh
+```
+
+只检查环境而不修改系统可运行 `./install.sh --check`；插件开发环境使用 `./install.sh --dev`。脚本要求服务器已经具有 Node.js 22+，不会擅自替换 Hydro 正在使用的 Node.js。
+
+Pyright 已作为 npm 依赖随插件安装。也可以手动准备其他语言服务器：
 
 - clangd：按[官方安装说明](https://clangd.llvm.org/installation.html)安装，确保 `clangd --version` 可运行，或在插件设置中填写绝对路径；
 - JDT LS：按[官方说明](https://github.com/eclipse-jdtls/eclipse.jdt.ls#running-from-the-command-line-with-wrapper-script)准备 Java 21+ 和 `jdtls` wrapper，或在设置中填写 wrapper 的绝对路径；
@@ -24,8 +32,7 @@ Pyright 已作为 npm 依赖随插件安装。clangd 和 JDT LS 需要安装在 
 ```bash
 git clone git@github.com:LMTINSUZHOU/Hydro-Batter-Code-Edit.git
 cd Hydro-Batter-Code-Edit
-npm install
-npm run check
+./install.sh
 hydrooj addon add "$(pwd)"
 ```
 
@@ -39,7 +46,7 @@ hydrooj addon add "$(pwd)"
 
 在 C++ 的 `vector<int> values` 后输入 `values.pu`，会优先建议 `push_back(value)`；Python 的 `items.ap` 会得到 `append(value)`；Java 的 `Map` 变量输入 `.getO` 会得到 `getOrDefault(key, defaultValue)`。用户自定义方法的返回类型也会继续传播，例如 `graph.neighbors(1).ap` 可以根据 `neighbors` 的返回注解继续补全。插件也会补全 `#include <...>`、Python/Java 的 `import`、`std::`/`Arrays.`/`Math.` 等静态成员，以及当前文件中声明的函数与方法。函数候选使用 Monaco snippet，接受后可继续按 <kbd>Tab</kbd> 在参数占位之间移动。
 
-编辑器右下角显示 `Batter 1.3.0 · 补全已就绪 · 语法分析已就绪 · 语言服务器已就绪` 时，表示插件、Tree-sitter 和当前语言的 LSP 都已经挂载到 Monaco。插件会读取站点的 `LANGS` 配置，并兼容 `cpp`、`c_cpp`、`text/x-c++src`、`python3` 等常见别名。LSP 启动期间或连接失败时仍会使用 Tree-sitter 与静态目录补全，不会阻塞编辑器。
+编辑器右下角显示 `Batter 1.3.1 · 补全已就绪 · 语法分析已就绪 · 语言服务器已就绪` 时，表示插件、Tree-sitter 和当前语言的 LSP 都已经挂载到 Monaco。后面的 `8 diagnostics` 表示当前文件共有 8 条轻量/LSP 诊断，橙色只是提醒存在问题，不是插件加载失败。插件会读取站点的 `LANGS` 配置，并兼容 `cpp`、`c_cpp`、`text/x-c++src`、`python3` 等常见别名。LSP 启动期间或连接失败时仍会使用 Tree-sitter 与静态目录补全，不会阻塞编辑器。
 
 | 操作 | 快捷键 |
 | --- | --- |
@@ -50,7 +57,7 @@ hydrooj addon add "$(pwd)"
 
 恢复和清除草稿也可以从 Monaco 右键菜单或命令面板执行。
 
-如果升级后仍显示旧版本，请重启 Hydro 服务并对题目页执行一次强制刷新。浏览器控制台中输入 `UiContext.hydroBatterCodeEdit` 可确认后端插件版本和可用的 `lspLanguages`，输入 `window.HydroBatterCodeEdit` 可以查看前端版本、Tree-sitter/LSP 状态、编辑器数量和补全调用次数；两个对象中的版本都应为 `1.3.0`。
+如果升级后仍显示旧版本，请重启 Hydro 服务并对题目页执行一次强制刷新。浏览器控制台中输入 `UiContext.hydroBatterCodeEdit` 可确认后端插件版本和可用的 `lspLanguages`，输入 `window.HydroBatterCodeEdit` 可以查看前端版本、Tree-sitter/LSP 状态、编辑器数量和补全调用次数；两个对象中的版本都应为 `1.3.1`。
 
 ## 配置
 
@@ -58,6 +65,7 @@ hydrooj addon add "$(pwd)"
 
 - 各项能力的总开关；
 - LSP 总开关，以及 clangd、Pyright、JDT LS 的可执行文件路径；
+- clangd 使用的受信任 C++ 编译器；默认 `auto`，Linux 优先 GNU `g++`，macOS 优先 Homebrew 的版本化 `g++`；
 - 全局/单用户最大 LSP 会话数、文档大小限制和空闲回收时间；
 - 自动保存和诊断的防抖时间；
 - 本地草稿保留天数；
@@ -67,6 +75,8 @@ hydrooj addon add "$(pwd)"
 ## 诊断边界
 
 浏览器轻量诊断与真实 LSP 诊断使用不同的 Monaco marker owner，不会覆盖 Monaco 已有的诊断。clangd、Pyright、JDT LS 的结果比正则/Tree-sitter 推断准确，但编译参数、Python 环境和 Java classpath 仍可能与最终评测环境不同，运行结果以 Hydro 评测机为准。
+
+`#include <bits/stdc++.h>` 是 GNU libstdc++ 提供的非标准聚合头。如果语言服务器已就绪但它仍显示 `file not found`，通常表示服务器只有 clangd、没有 GNU C++ 标准库，或 clangd 没找到评测所用的 GCC。运行 `./install.sh --check` 可同时验证 GNU 编译器和 clangd；1.3.1 会为每个 C++ 临时工作区生成受控的 `compile_commands.json`，并使用 `--query-driver` 从管理员配置的编译器获取系统头路径。
 
 启用 LSP 后，当前编辑器代码会通过同源、需登录的 WebSocket 发送到 Hydro 后端，并写入该连接专属的临时工作区；连接关闭后工作区会删除。每个会话使用独立语言服务器进程，网关限制方法、文档 URI、消息大小、全局/单用户并发数和空闲时间，并使用 `shell: false` 启动管理员配置的可执行文件。语言服务器仍与 Hydro 运行在同一主机权限边界内，公开部署建议让 Hydro 使用专用低权限系统账户或容器运行。若站点不能接受代码进入后端，可关闭 `lspEnabled`，插件将恢复为完全浏览器内的 Tree-sitter 模式。
 

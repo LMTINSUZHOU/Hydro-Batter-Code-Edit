@@ -14,6 +14,7 @@ declare module 'hydrooj' {
         'hydro-batter-code-edit.completion': boolean;
         'hydro-batter-code-edit.lspEnabled': boolean;
         'hydro-batter-code-edit.lspClangdCommand': string;
+        'hydro-batter-code-edit.lspCppCompilerCommand': string;
         'hydro-batter-code-edit.lspPyrightCommand': string;
         'hydro-batter-code-edit.lspJdtlsCommand': string;
         'hydro-batter-code-edit.lspMaxSessions': number;
@@ -35,7 +36,7 @@ declare module 'hydrooj' {
 }
 
 export const name = 'hydro-batter-code-edit';
-export const version = '1.3.0';
+export const version = '1.3.1';
 
 const TREE_SITTER_ASSETS: Record<string, string> = {
     'web-tree-sitter.wasm': require.resolve('web-tree-sitter/web-tree-sitter.wasm'),
@@ -67,6 +68,8 @@ const settingSchema = Schema.object({
             .description('Enable clangd, Pyright and JDT language servers'),
         lspClangdCommand: Schema.string().default('clangd')
             .description('clangd executable path or command name'),
+        lspCppCompilerCommand: Schema.string().default('auto')
+            .description('Trusted C++ compiler used by clangd to discover GCC/libstdc++ headers; auto or an executable path'),
         lspPyrightCommand: Schema.string().default('bundled')
             .description('Pyright executable path, command name, or bundled'),
         lspJdtlsCommand: Schema.string().default('jdtls')
